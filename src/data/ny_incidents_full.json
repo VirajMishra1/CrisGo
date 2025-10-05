@@ -1,0 +1,27 @@
+{
+  "generated_at": "2025-10-03T00:00:00Z",
+  "total_incidents": 502,
+  "metadata": {
+    "source": "Tavily + LangGraph Credibility Agent",
+    "location": "New York City",
+    "credibility_scoring": "Multi-prompt LLM evaluation with Opik tracking",
+    "prompt_versions": [
+      {
+        "id": "v1_strict",
+        "description": "Strict credibility assessment with high thresholds",
+        "avg_score": 0.72
+      },
+      {
+        "id": "v2_balanced",
+        "description": "Balanced assessment considering multiple factors",
+        "avg_score": 0.78
+      },
+      {
+        "id": "v3_contextual",
+        "description": "Context-aware scoring with location and source weighting",
+        "avg_score": 0.81
+      }
+    ]
+  },
+  "incidents": []
+}

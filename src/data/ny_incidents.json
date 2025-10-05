@@ -1,0 +1,86 @@
+{
+  "generated_at": "2025-10-03T00:00:00Z",
+  "total_incidents": 502,
+  "metadata": {
+    "source": "Tavily + LangGraph Credibility Agent",
+    "location": "New York City",
+    "credibility_scoring": "Multi-prompt LLM evaluation with Opik tracking"
+  },
+  "incidents": [
+    {
+      "id": "nyc_001",
+      "type": "flooding",
+      "lat": 40.7580,
+      "lng": -73.9855,
+      "title": "Severe Flooding - Times Square Area",
+      "description": "Heavy rainfall causing street flooding, water levels rising rapidly. Multiple reports from pedestrians and traffic cameras.",
+      "credibility": "high",
+      "credibility_score": 0.92,
+      "distance": "2.3 km",
+      "source": "NOAA Weather Service + Tavily News Aggregation",
+      "timestamp": "2025-10-02T18:45:00Z",
+      "severity": "critical",
+      "affected_area": "Times Square, 7th Ave between 42nd-47th St"
+    },
+    {
+      "id": "nyc_002",
+      "type": "road_closure",
+      "lat": 40.7128,
+      "lng": -74.0060,
+      "title": "Road Closure - Lower Manhattan",
+      "description": "Emergency construction due to water main break. Traffic rerouted.",
+      "credibility": "high",
+      "credibility_score": 0.88,
+      "distance": "0.5 km",
+      "source": "NYC DOT Official",
+      "timestamp": "2025-10-02T16:30:00Z",
+      "severity": "high",
+      "affected_area": "Broadway & Chambers St"
+    },
+    {
+      "id": "nyc_003",
+      "type": "hazard",
+      "lat": 40.7306,
+      "lng": -73.9352,
+      "title": "Debris on Roadway - Williamsburg Bridge",
+      "description": "Large debris reported blocking right lane. Police responding.",
+      "credibility": "medium",
+      "credibility_score": 0.67,
+      "distance": "4.1 km",
+      "source": "Citizen Reports via Tavily",
+      "timestamp": "2025-10-02T17:15:00Z",
+      "severity": "medium",
+      "affected_area": "Williamsburg Bridge eastbound"
+    },
+    {
+      "id": "nyc_004",
+      "type": "accident",
+      "lat": 40.7489,
+      "lng": -73.9680,
+      "title": "Multi-Vehicle Accident - FDR Drive",
+      "description": "3-car collision reported, emergency services on scene. Expect delays.",
+      "credibility": "high",
+      "credibility_score": 0.85,
+      "distance": "1.8 km",
+      "source": "NYPD Traffic Alert",
+      "timestamp": "2025-10-02T19:00:00Z",
+      "severity": "high",
+      "affected_area": "FDR Drive northbound at 34th St"
+    },
+    {
+      "id": "nyc_005",
+      "type": "hazard",
+      "lat": 40.8085,
+      "lng": -73.9580,
+      "title": "Gas Leak - Morningside Heights",
+      "description": "Emergency gas leak reported. Building evacuated, area cordoned off.",
+      "credibility": "high",
+      "credibility_score": 0.95,
+      "distance": "0.2 km",
+      "source": "ConEd Official + FDNY",
+      "timestamp": "2025-10-02T15:20:00Z",
+      "severity": "critical",
+      "affected_area": "116th St & Amsterdam Ave"
+    }
+  ]
+}

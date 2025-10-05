@@ -1,0 +1,251 @@
+{
+  "metadata": {
+    "total_incidents": 502,
+    "generated_at": "2025-10-03T12:00:00Z",
+    "source": "Tavily + LangGraph + Credibility Scoring",
+    "coverage_area": "New York City",
+    "boroughs": ["Manhattan", "Brooklyn", "Queens", "Bronx", "Staten Island"]
+  },
+  "incidents": [
+    {
+      "id": "nyc_001",
+      "type": "flooding",
+      "lat": 40.7580,
+      "lng": -73.9855,
+      "title": "Times Square Flooding",
+      "description": "Heavy flooding reported on 42nd Street and Broadway. Water level approximately 8 inches.",
+      "credibility": "high",
+      "distance": "0.0 km",
+      "timestamp": "2025-10-03T08:15:00Z",
+      "severity": "critical",
+      "source": {
+        "type": "tavily",
+        "url": "https://example.com/nyc-flooding",
+        "reliability": 0.92
+      },
+      "credibility_scores": {
+        "overall": 0.89,
+        "prompt_v1": 0.87,
+        "prompt_v2": 0.91,
+        "source_reliability": 0.92,
+        "temporal_relevance": 0.95
+      }
+    },
+    {
+      "id": "nyc_002",
+      "type": "hazard",
+      "lat": 40.7306,
+      "lng": -73.9352,
+      "title": "Road Debris - Brooklyn",
+      "description": "Large debris blocking eastbound lane on Atlantic Avenue near Franklin Avenue.",
+      "credibility": "medium",
+      "distance": "4.1 km",
+      "timestamp": "2025-10-03T07:45:00Z",
+      "severity": "moderate",
+      "source": {
+        "type": "reddit",
+        "url": "https://reddit.com/r/nyc/comments/example",
+        "reliability": 0.68
+      },
+      "credibility_scores": {
+        "overall": 0.71,
+        "prompt_v1": 0.69,
+        "prompt_v2": 0.73,
+        "source_reliability": 0.68,
+        "temporal_relevance": 0.82
+      }
+    },
+    {
+      "id": "nyc_003",
+      "type": "accident",
+      "lat": 40.7489,
+      "lng": -73.9680,
+      "title": "FDR Drive Accident",
+      "description": "Minor vehicle collision southbound near East 34th Street. One lane blocked.",
+      "credibility": "low",
+      "distance": "1.8 km",
+      "timestamp": "2025-10-03T06:30:00Z",
+      "severity": "minor",
+      "source": {
+        "type": "social_media",
+        "url": "https://twitter.com/example",
+        "reliability": 0.45
+      },
+      "credibility_scores": {
+        "overall": 0.52,
+        "prompt_v1": 0.51,
+        "prompt_v2": 0.53,
+        "source_reliability": 0.45,
+        "temporal_relevance": 0.67
+      }
+    },
+    {
+      "id": "nyc_004",
+      "type": "road_closure",
+      "lat": 40.8085,
+      "lng": -73.9580,
+      "title": "Emergency Road Closure - Harlem",
+      "description": "116th St & Amsterdam Ave closed due to gas leak. Emergency crews on scene.",
+      "credibility": "high",
+      "distance": "0.2 km",
+      "timestamp": "2025-10-03T09:00:00Z",
+      "severity": "critical",
+      "source": {
+        "type": "official",
+        "url": "https://nyc.gov/traffic",
+        "reliability": 0.98
+      },
+      "credibility_scores": {
+        "overall": 0.95,
+        "prompt_v1": 0.94,
+        "prompt_v2": 0.96,
+        "source_reliability": 0.98,
+        "temporal_relevance": 0.99
+      }
+    },
+    {
+      "id": "nyc_005",
+      "type": "flooding",
+      "lat": 40.7614,
+      "lng": -73.9776,
+      "title": "Central Park South Flooding",
+      "description": "Water main break causing street flooding near Plaza Hotel.",
+      "credibility": "high",
+      "distance": "1.2 km",
+      "timestamp": "2025-10-03T08:45:00Z",
+      "severity": "critical",
+      "source": {
+        "type": "tavily",
+        "url": "https://example.com/water-main",
+        "reliability": 0.91
+      },
+      "credibility_scores": {
+        "overall": 0.88,
+        "prompt_v1": 0.86,
+        "prompt_v2": 0.90,
+        "source_reliability": 0.91,
+        "temporal_relevance": 0.93
+      }
+    },
+    {
+      "id": "nyc_006",
+      "type": "hazard",
+      "lat": 40.7282,
+      "lng": -73.9942,
+      "title": "Construction Zone - Lower East Side",
+      "description": "Active construction on Delancey Street. Lane restrictions in effect.",
+      "credibility": "medium",
+      "distance": "3.5 km",
+      "timestamp": "2025-10-03T07:00:00Z",
+      "severity": "moderate",
+      "source": {
+        "type": "reddit",
+        "url": "https://reddit.com/r/nyc/comments/example2",
+        "reliability": 0.72
+      },
+      "credibility_scores": {
+        "overall": 0.74,
+        "prompt_v1": 0.73,
+        "prompt_v2": 0.75,
+        "source_reliability": 0.72,
+        "temporal_relevance": 0.80
+      }
+    },
+    {
+      "id": "nyc_007",
+      "type": "hazard",
+      "lat": 40.7589,
+      "lng": -73.9851,
+      "title": "Broken Glass - Midtown",
+      "description": "Shattered storefront glass on sidewalk near Bryant Park.",
+      "credibility": "low",
+      "distance": "0.5 km",
+      "timestamp": "2025-10-03T05:15:00Z",
+      "severity": "minor",
+      "source": {
+        "type": "social_media",
+        "url": "https://twitter.com/example2",
+        "reliability": 0.41
+      },
+      "credibility_scores": {
+        "overall": 0.48,
+        "prompt_v1": 0.46,
+        "prompt_v2": 0.50,
+        "source_reliability": 0.41,
+        "temporal_relevance": 0.62
+      }
+    },
+    {
+      "id": "nyc_008",
+      "type": "accident",
+      "lat": 40.7484,
+      "lng": -73.9857,
+      "title": "Multi-Vehicle Collision - Herald Square",
+      "description": "Three-car collision at 34th St and 6th Ave. Traffic severely impacted.",
+      "credibility": "high",
+      "distance": "1.0 km",
+      "timestamp": "2025-10-03T08:30:00Z",
+      "severity": "critical",
+      "source": {
+        "type": "tavily",
+        "url": "https://example.com/collision",
+        "reliability": 0.89
+      },
+      "credibility_scores": {
+        "overall": 0.87,
+        "prompt_v1": 0.85,
+        "prompt_v2": 0.89,
+        "source_reliability": 0.89,
+        "temporal_relevance": 0.94
+      }
+    },
+    {
+      "id": "nyc_009",
+      "type": "fire",
+      "lat": 40.7505,
+      "lng": -73.9934,
+      "title": "Building Fire - Chelsea",
+      "description": "Small fire reported in residential building on 8th Avenue. FDNY responding.",
+      "credibility": "high",
+      "distance": "2.1 km",
+      "timestamp": "2025-10-03T09:15:00Z",
+      "severity": "critical",
+      "source": {
+        "type": "official",
+        "url": "https://fdny.gov/alerts",
+        "reliability": 0.99
+      },
+      "credibility_scores": {
+        "overall": 0.96,
+        "prompt_v1": 0.95,
+        "prompt_v2": 0.97,
+        "source_reliability": 0.99,
+        "temporal_relevance": 0.98
+      }
+    },
+    {
+      "id": "nyc_010",
+      "type": "hazard",
+      "lat": 40.7831,
+      "lng": -73.9712,
+      "title": "Pothole Cluster - Upper West Side",
+      "description": "Multiple large potholes on Amsterdam Ave near 79th Street.",
+      "credibility": "medium",
+      "distance": "3.2 km",
+      "timestamp": "2025-10-03T06:45:00Z",
+      "severity": "moderate",
+      "source": {
+        "type": "reddit",
+        "url": "https://reddit.com/r/nyc/comments/example3",
+        "reliability": 0.65
+      },
+      "credibility_scores": {
+        "overall": 0.68,
+        "prompt_v1": 0.66,
+        "prompt_v2": 0.70,
+        "source_reliability": 0.65,
+        "temporal_relevance": 0.76
+      }
+    }
+  ]
+}
