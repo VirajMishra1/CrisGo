@@ -40,12 +40,12 @@ function Arrow3D({ rotation }: { rotation: number }) {
     if (meshRef.current) {
       // Y-axis rotation for compass heading
       meshRef.current.rotation.y = (rotation * Math.PI) / 180;
-      // X-axis rotation to tilt arrow forward at 45 degrees
-      meshRef.current.rotation.x = -Math.PI / 4; // -45 degrees
+      // X-axis rotation set to 0 for straight arrow (no tilt)
+      meshRef.current.rotation.x = 0;
       console.log('➡️ Arrow rotation applied:', {
         degrees: Math.round(rotation),
         radians: ((rotation * Math.PI) / 180).toFixed(2),
-        tilt: '45° forward'
+        tilt: 'straight (0°)'
       });
     }
   }, [rotation]);
