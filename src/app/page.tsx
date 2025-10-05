@@ -1,9 +1,8 @@
 "use client";
 
 import { useState, useEffect } from "react";
-import MapView from "@/components/MapView";
+import dynamicImport from "next/dynamic";
 import TopNav from "@/components/TopNav";
-import AROverlay from "@/components/AROverlay";
 import MapLegend from "@/components/MapLegend";
 import RouteInfoCard from "@/components/RouteInfoCard";
 import CredibilityViewer from "@/components/CredibilityViewer";
@@ -12,6 +11,10 @@ import { geocodeAddress, getRoute, type RouteResult, type TransportMode, type In
 import { generateAllIncidents, type IncidentData } from "@/data/generate-incidents-data";
 import { speakText } from "@/lib/tts";
 import { toast } from "sonner";
+
+// Dynamically import components that need browser APIs (Leaflet, camera, etc.)
+const MapView = dynamicImport(() => import("@/components/MapView"), { ssr: false });
+const AROverlay = dynamicImport(() => import("@/components/AROverlay"), { ssr: false });
 
 // Prevent static generation
 export const dynamic = 'force-dynamic';
@@ -31,6 +34,9 @@ interface RouteData {
 }
 
 export default function Home() {
+  // Add mounted state to prevent SSR issues
+  const [isMounted, setIsMounted] = useState(false);
+  
   const [currentView, setCurrentView] = useState<"dashboard" | "ar">("dashboard");
   const [selectedIncident, setSelectedIncident] = useState<Incident | null>(null);
   const [showIncidents, setShowIncidents] = useState(true);
@@ -52,8 +58,15 @@ export default function Home() {
   const [showVoiceReportDialog, setShowVoiceReportDialog] = useState(false);
   const [reportedIncidents, setReportedIncidents] = useState<Incident[]>([]);
 
+  // Set mounted state after client-side hydration
+  useEffect(() => {
+    setIsMounted(true);
+  }, []);
+
   // Generate incidents on mount
   useEffect(() => {
+    if (!isMounted) return;
+    
     const incidents = generateAllIncidents();
     // Convert to Incident format for compatibility
     const convertedIncidents: Incident[] = incidents.map((inc: IncidentData) => ({
@@ -115,7 +128,7 @@ export default function Home() {
     
     setDisplayIncidents([...sampled, testIncident]);
     console.log(`✅ Loaded ${incidents.length} incidents (displaying ${sampled.length + 1} on map: ~${Math.floor(sampled.length/3)} per color + 1 test incident)`);
-  }, []);
+  }, [isMounted]);
 
   // Start navigation and location tracking
   const handleStartNavigation = () => {
@@ -124,7 +137,7 @@ export default function Home() {
       return;
     }
 
-    if (!navigator.geolocation) {
+    if (typeof navigator === 'undefined' || !navigator.geolocation) {
       toast.error("Geolocation is not supported by your browser");
       setLocationError("Geolocation not supported");
       return;
@@ -258,7 +271,7 @@ export default function Home() {
 
   // Stop navigation and location tracking
   const handleStopNavigation = () => {
-    if (watchId !== null) {
+    if (watchId !== null && typeof navigator !== 'undefined') {
       navigator.geolocation.clearWatch(watchId);
       setWatchId(null);
     }
@@ -275,7 +288,7 @@ export default function Home() {
   // Cleanup on unmount
   useEffect(() => {
     return () => {
-      if (watchId !== null) {
+      if (watchId !== null && typeof navigator !== 'undefined') {
         navigator.geolocation.clearWatch(watchId);
       }
     };
@@ -380,6 +393,15 @@ export default function Home() {
     // Show success message
     toast.success("Incident has been added to the map!");
   };
+
+  // Show loading state during SSR
+  if (!isMounted) {
+    return (
+      <div className="relative w-screen h-screen overflow-hidden bg-slate-900 flex items-center justify-center">
+        <div className="text-white text-lg">Loading...</div>
+      </div>
+    );
+  }
 
   return (
     <div className="relative w-screen h-screen overflow-hidden bg-slate-900">
