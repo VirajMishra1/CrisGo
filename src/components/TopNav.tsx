@@ -207,11 +207,15 @@ export default function TopNav({
               transition={{ type: "spring", stiffness: 400, damping: 17 }}
             >
               <motion.div 
-                className="w-10 h-10 bg-slate-900 rounded-xl flex items-center justify-center shadow-sm"
+                className="w-10 h-10 rounded-xl flex items-center justify-center overflow-hidden"
                 whileHover={{ rotate: 360 }}
                 transition={{ type: "spring", stiffness: 200, damping: 15, duration: 0.6 }}
               >
-                <span className="text-white font-black text-lg">CG</span>
+                <img 
+                  src="https://slelguoygbfzlpylpxfs.supabase.co/storage/v1/object/public/project-uploads/59d2dceb-cfc5-4828-8f6f-09b0e104c104/generated_images/app-icon-logo-design-for-crisgo-navigati-b2af2c7c-20251005134208.jpg" 
+                  alt="CrisGo Logo" 
+                  className="w-full h-full object-cover"
+                />
               </motion.div>
               <div>
                 <h1 className="text-slate-900 font-bold text-lg tracking-tight">CrisGo</h1>
@@ -453,8 +457,12 @@ export default function TopNav({
           <div className="flex items-center justify-between">
             {/* Logo */}
             <div className="flex items-center gap-2">
-              <div className="w-8 h-8 bg-slate-900 rounded-lg flex items-center justify-center">
-                <span className="text-white font-black text-sm">CG</span>
+              <div className="w-8 h-8 rounded-lg flex items-center justify-center overflow-hidden">
+                <img 
+                  src="https://slelguoygbfzlpylpxfs.supabase.co/storage/v1/object/public/project-uploads/59d2dceb-cfc5-4828-8f6f-09b0e104c104/generated_images/app-icon-logo-design-for-crisgo-navigati-b2af2c7c-20251005134208.jpg" 
+                  alt="CrisGo Logo" 
+                  className="w-full h-full object-cover"
+                />
               </div>
               <div>
                 <h1 className="text-slate-900 font-bold text-sm">CrisGo</h1>
