@@ -108,8 +108,8 @@ export default function Home() {
     const testIncident: Incident = {
       id: "test-location-incident",
       type: "hazard" as any,
-      lat: 40.80927596228126,
-      lng: -73.95116206510814,
+      lat: 40.807101388941604,
+      lng: -73.96397002082942,
       title: "Test Incident at Your Location",
       credibility: "high",
       description: "This is a test incident placed at your exact location to test the AR overlay feature",
