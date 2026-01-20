@@ -4,7 +4,7 @@
 
 CrisGo is an AI-driven crisis navigation platform designed to guide you through emergencies with confidence. By combining real-time hazard mapping, community-powered incident reporting, and AR-enhanced navigation, CrisGo empowers you to make safe, life-saving decisions when every second counts.  
 
-[![Demo](https://img.shields.io/badge/demo-live-brightgreen)](YOUR_DEMO_URL)  
+[![Demo](https://img.shields.io/badge/demo-live-brightgreen)](https://crisgo.vercel.app/)  
 [![License](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)  
 
 ---
@@ -201,23 +201,3 @@ LangGraph – agent orchestration
 Tavily – real-time verification
 
 OpenStreetMap – mapping data
-
-Special thanks to hackathon organizers & sponsors!
-
-📞 Contact
-Team: [Your Team Name]
-
-Email: your.email@example.com
-
-Twitter: @yourhandle
-
-Demo: Live Demo
-
-<div align="center"> <strong>🚨 Navigate Safely. Every Time. 🚨</strong> Made with ❤️ at [Hackathon Name] 2025 </div> ```
-⚡ Quick note: replace
-
-YOUR_DEMO_URL with your demo link
-
-yourusername in the clone URL
-
-Contact details, team name, and hackathon name
