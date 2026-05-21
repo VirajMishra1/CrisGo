@@ -1,83 +1,117 @@
 "use client";
 
-import { motion } from "framer-motion";
+import { useState } from "react";
+import { motion, AnimatePresence } from "framer-motion";
+import { ChevronUp } from "lucide-react";
 
 interface MapLegendProps {
   showIncidents: boolean;
   onToggleIncidents: () => void;
 }
 
+const SEVERITY_ITEMS = [
+  { label: "High", outer: "#fee2e2", inner: "#dc2626", ring: "#fca5a5" },
+  { label: "Med", outer: "#fef9c3", inner: "#ca8a04", ring: "#fde047" },
+  { label: "Low", outer: "#dcfce7", inner: "#16a34a", ring: "#86efac" },
+];
+
+const TYPE_ICONS: { label: string; svg: string }[] = [
+  { label: "Quake", svg: '<circle cx="8" cy="8" r="3" fill="none" stroke="#475569" stroke-width="1.5"/><path d="M8 1v2M8 13v2M1 8h2M13 8h2" stroke="#475569" stroke-width="1.5"/>' },
+  { label: "Fire", svg: '<path d="M8 2c0 3-4 5-4 8a4 4 0 008 0c0-3-4-5-4-8z" fill="#475569" opacity="0.9"/>' },
+  { label: "Flood", svg: '<path d="M2 10c1.5-1.5 3-1.5 4.5 0s3 1.5 4.5 0M2 13c1.5-1.5 3-1.5 4.5 0s3 1.5 4.5 0" stroke="#475569" stroke-width="1.5" fill="none"/>' },
+  { label: "Traffic", svg: '<rect x="3" y="2" width="10" height="12" rx="2" fill="none" stroke="#475569" stroke-width="1.2"/><circle cx="8" cy="5" r="1.5" fill="#475569"/><circle cx="8" cy="11" r="1.5" fill="#475569"/>' },
+  { label: "Power", svg: '<path d="M9 2L5 9h3l-1 5 4-7H8l1-5z" fill="#475569"/>' },
+  { label: "Gas", svg: '<circle cx="8" cy="6" r="3" fill="none" stroke="#475569" stroke-width="1.2"/><path d="M6 9c-1 2-1 4 0 5M10 9c1 2 1 4 0 5" stroke="#475569" stroke-width="1.2" fill="none"/>' },
+];
+
+function TypeIcon({ svg }: { svg: string }) {
+  return (
+    <div
+      className="w-4 h-4 rounded-full bg-slate-100 flex items-center justify-center"
+      // Static hardcoded SVG only — no user input
+      dangerouslySetInnerHTML={{
+        __html: `<svg width="12" height="12" viewBox="0 0 16 16">${svg}</svg>`,
+      }}
+    />
+  );
+}
+
 export default function MapLegend({ showIncidents, onToggleIncidents }: MapLegendProps) {
+  const [expanded, setExpanded] = useState(false);
+
   return (
     <motion.div
-      className="hidden lg:flex absolute bottom-6 left-6 z-30 bg-white/95 dark:bg-slate-900/95 backdrop-blur-xl rounded-xl border border-white/20 dark:border-slate-800/50 shadow-2xl px-3 lg:px-4 py-2 lg:py-2.5 hover:shadow-[0_20px_60px_-15px_rgba(0,0,0,0.3)] transition-all duration-300 !w-[29.9%] !h-[60px] !max-w-[29.9%]"
+      className="hidden lg:block absolute bottom-4 left-4 z-30"
       initial={{ y: 100, opacity: 0 }}
       animate={{ y: 0, opacity: 1 }}
       transition={{ duration: 0.4 }}
-      whileHover={{ y: -2, scale: 1.02 }}>
+    >
+      <div className="bg-white/95 backdrop-blur-xl rounded-lg border border-slate-200 shadow-lg px-2.5 py-1.5">
+        <div className="flex items-center gap-2">
+          {SEVERITY_ITEMS.map(({ label, outer, inner, ring }) => (
+            <div key={label} className="flex items-center gap-1">
+              <div
+                className="w-4 h-4 rounded-full flex items-center justify-center"
+                style={{ background: outer, border: `1.5px solid ${ring}` }}
+              >
+                <div className="w-1.5 h-1.5 rounded-full" style={{ background: inner }} />
+              </div>
+              <span className="text-[10px] font-medium text-slate-600">{label}</span>
+            </div>
+          ))}
 
-      <div className="flex items-center gap-2 lg:gap-3">
-        {/* High credibility - two-tone red with micro-interaction */}
-        <motion.div
-          className="flex items-center gap-1.5 lg:gap-2 cursor-pointer flex-shrink-0"
-          whileHover={{ scale: 1.1 }}
-          whileTap={{ scale: 0.95 }}
-          transition={{ type: "spring", stiffness: 400, damping: 17 }}>
+          <div className="h-4 w-px bg-slate-200 mx-0.5" />
 
-          <div className="relative flex items-center justify-center w-5 h-5 lg:w-6 lg:h-6 rounded-full shadow-lg transition-all duration-300 hover:shadow-xl" style={{ background: "#f87171" }}>
-            <div className="w-2.5 h-2.5 lg:w-3 lg:h-3 rounded-full" style={{ background: "#dc2626" }} />
-            <div className="absolute inset-0 rounded-full animate-ping opacity-20" style={{ background: "#f87171" }} />
-          </div>
-          <span className="text-xs font-medium text-gray-900 dark:text-gray-100">High</span>
-        </motion.div>
-        
-        {/* Medium credibility with micro-interaction */}
-        <motion.div
-          className="flex items-center gap-1.5 lg:gap-2 cursor-pointer flex-shrink-0"
-          whileHover={{ scale: 1.1 }}
-          whileTap={{ scale: 0.95 }}
-          transition={{ type: "spring", stiffness: 400, damping: 17 }}>
+          <motion.button
+            onClick={onToggleIncidents}
+            className={`relative w-8 h-4 rounded-full transition-all flex-shrink-0 ${
+              showIncidents ? "bg-red-500" : "bg-slate-300"
+            }`}
+            title={showIncidents ? "Hide incidents" : "Show incidents"}
+            whileTap={{ scale: 0.95 }}
+          >
+            <motion.div
+              className="absolute top-0.5 w-3 h-3 bg-white rounded-full shadow-sm"
+              animate={{ x: showIncidents ? 16 : 2 }}
+              transition={{ type: "spring", stiffness: 500, damping: 30 }}
+            />
+          </motion.button>
 
-          <div className="relative flex items-center justify-center w-5 h-5 lg:w-6 lg:h-6 rounded-full shadow-lg transition-all duration-300 hover:shadow-xl" style={{ background: "#f87171" }}>
-            <div className="w-2.5 h-2.5 lg:w-3 lg:h-3 bg-yellow-400 rounded-full" />
-          </div>
-          <span className="text-xs font-medium text-gray-900 dark:text-gray-100">Med</span>
-        </motion.div>
-        
-        {/* Low credibility with micro-interaction */}
-        <motion.div
-          className="flex items-center gap-1.5 lg:gap-2 cursor-pointer flex-shrink-0"
-          whileHover={{ scale: 1.1 }}
-          whileTap={{ scale: 0.95 }}
-          transition={{ type: "spring", stiffness: 400, damping: 17 }}>
+          <div className="h-4 w-px bg-slate-200 mx-0.5" />
 
-          <div className="relative flex items-center justify-center w-5 h-5 lg:w-6 lg:h-6 rounded-full shadow-lg transition-all duration-300 hover:shadow-xl" style={{ background: "#f87171" }}>
-            <div className="w-2.5 h-2.5 lg:w-3 lg:h-3 bg-green-500 rounded-full" />
-          </div>
-          <span className="text-xs font-medium text-gray-900 dark:text-gray-100">Low</span>
-        </motion.div>
-        
-        {/* Divider */}
-        <div className="h-6 lg:h-7 w-px bg-gradient-to-b from-transparent via-gray-300 dark:via-gray-700 to-transparent flex-shrink-0 mx-1" />
-        
-        {/* Toggle button with smooth micro-interaction */}
-        <motion.button
-          onClick={onToggleIncidents}
-          className={`relative w-10 lg:w-12 h-5 lg:h-6 rounded-full transition-all duration-300 shadow-lg flex-shrink-0 ${
-          showIncidents ? "bg-gradient-to-r from-red-500 to-red-600" : "bg-gray-300 dark:bg-gray-600"}`
-          }
-          title={showIncidents ? "Hide incidents" : "Show incidents"}
-          whileHover={{ scale: 1.05 }}
-          whileTap={{ scale: 0.95 }}
-          transition={{ type: "spring", stiffness: 400, damping: 17 }}>
+          <motion.button
+            onClick={() => setExpanded(!expanded)}
+            className="flex items-center gap-0.5 text-[10px] font-medium text-slate-500 hover:text-slate-700 transition-colors"
+            whileTap={{ scale: 0.95 }}
+          >
+            Icons
+            <motion.span animate={{ rotate: expanded ? 180 : 0 }} transition={{ duration: 0.2 }}>
+              <ChevronUp className="w-3 h-3" />
+            </motion.span>
+          </motion.button>
+        </div>
 
-          <motion.div
-            className="absolute top-0.5 w-4 h-4 lg:w-5 lg:h-5 bg-white rounded-full shadow-lg"
-            animate={{ x: showIncidents ? 20 : 2, lg: { x: showIncidents ? 24 : 2 } }}
-            transition={{ type: "spring", stiffness: 500, damping: 30 }} />
-
-        </motion.button>
+        <AnimatePresence>
+          {expanded && (
+            <motion.div
+              initial={{ height: 0, opacity: 0 }}
+              animate={{ height: "auto", opacity: 1 }}
+              exit={{ height: 0, opacity: 0 }}
+              transition={{ duration: 0.2 }}
+              className="overflow-hidden"
+            >
+              <div className="flex items-center gap-2 pt-1.5 mt-1.5 border-t border-slate-100">
+                {TYPE_ICONS.map(({ label, svg }) => (
+                  <div key={label} className="flex items-center gap-1">
+                    <TypeIcon svg={svg} />
+                    <span className="text-[10px] text-slate-500">{label}</span>
+                  </div>
+                ))}
+              </div>
+            </motion.div>
+          )}
+        </AnimatePresence>
       </div>
-    </motion.div>);
-
+    </motion.div>
+  );
 }

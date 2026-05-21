@@ -28,6 +28,24 @@ export interface Incident {
   lng: number;
   credibility: "high" | "medium" | "low";
   title: string;
+  type?: string;
+  description?: string;
+  distance?: number;
+  severity?: string;
+  timestamp?: string;
+  reports_count?: number;
+  source?: {
+    name: string;
+    type: string;
+    reliability: number;
+  };
+  credibility_scores?: {
+    overall: number;
+    prompt_v1?: number;
+    prompt_v2?: number;
+    source_reliability?: number;
+    temporal_relevance?: number;
+  };
 }
 
 /**
@@ -257,21 +275,14 @@ function generateAvoidanceWaypoints(
 export async function geocodeAddress(address: string): Promise<RoutePoint | null> {
   try {
     const response = await fetch(
-      `https://nominatim.openstreetmap.org/search?format=json&q=${encodeURIComponent(address)}&limit=1`,
-      {
-        headers: {
-          'User-Agent': 'SafeTrekXR-App'
-        }
-      }
+      `https://photon.komoot.io/api/?q=${encodeURIComponent(address)}&limit=1`,
+      { headers: { 'User-Agent': 'CrisGo/1.0' } }
     );
-    
     const data = await response.json();
-    
-    if (data && data.length > 0) {
-      return {
-        lat: parseFloat(data[0].lat),
-        lng: parseFloat(data[0].lon)
-      };
+    const features = data.features || [];
+    if (features.length > 0) {
+      const [lng, lat] = features[0].geometry?.coordinates || [0, 0];
+      return { lat, lng };
     }
     
     return null;
@@ -604,19 +615,85 @@ export async function getRoute(
   mode: TransportMode,
   incidents: Incident[] = []
 ): Promise<RouteResult | null> {
-  console.log(`🗺️ Calculating ${mode} route (FAST MODE - no incident avoidance)`);
-  
-  // Fast mode: Just get the direct optimal route without incident checking
+  console.log(`🗺️ Calculating ${mode} route with incident avoidance (${incidents.length} incidents)`);
+
+  // Get primary route from Valhalla (or OSRM fallback)
   const directRoute = await getValhallaRoute(start, end, mode);
-  
+
   if (!directRoute) {
     console.warn("⚠️ Valhalla unavailable, falling back to OSRM");
     return getOSRMRoute(start, end, mode);
   }
 
-  console.log(`✅ Route calculated: ${(directRoute.distance / 1000).toFixed(1)}km, ${Math.round(directRoute.duration / 60)}min`);
-  
-  return directRoute;
+  // If no incidents, return direct route
+  if (incidents.length === 0) {
+    console.log(`✅ Route calculated (no incidents): ${(directRoute.distance / 1000).toFixed(1)}km`);
+    return directRoute;
+  }
+
+  // Check if direct route passes near incidents
+  const nearbyIncidents = checkRouteForIncidents(directRoute.coordinates, incidents);
+
+  if (nearbyIncidents.length === 0) {
+    console.log(`✅ Route is clear of incidents: ${(directRoute.distance / 1000).toFixed(1)}km`);
+    return directRoute;
+  }
+
+  console.log(`⚠️ Direct route passes near ${nearbyIncidents.length} incidents — searching alternatives`);
+
+  // Generate alternative routes via waypoints that avoid incidents
+  const alternatives: RouteResult[] = [directRoute];
+  const directCost = calculateRouteCost(directRoute.coordinates, directRoute.distance, directRoute.duration, incidents);
+
+  // Try waypoints offset from the midpoint to route around incidents
+  const midLat = (start.lat + end.lat) / 2;
+  const midLng = (start.lng + end.lng) / 2;
+  const offsets = [
+    { lat: 0.005, lng: 0.005 },
+    { lat: -0.005, lng: -0.005 },
+    { lat: 0.005, lng: -0.005 },
+    { lat: -0.005, lng: 0.005 },
+    { lat: 0.01, lng: 0 },
+    { lat: -0.01, lng: 0 },
+    { lat: 0, lng: 0.01 },
+    { lat: 0, lng: -0.01 },
+  ];
+
+  for (const offset of offsets) {
+    const waypoint = { lat: midLat + offset.lat, lng: midLng + offset.lng };
+    try {
+      const leg1 = await getValhallaRoute(start, waypoint, mode);
+      const leg2 = await getValhallaRoute(waypoint, end, mode);
+      if (leg1 && leg2) {
+        const combined: RouteResult = {
+          coordinates: [...leg1.coordinates, ...leg2.coordinates],
+          distance: leg1.distance + leg2.distance,
+          duration: leg1.duration + leg2.duration,
+          steps: [...leg1.steps, ...leg2.steps],
+        };
+        alternatives.push(combined);
+      }
+    } catch {
+      // Skip failed alternatives
+    }
+  }
+
+  // Score all alternatives and pick lowest cost
+  let bestRoute = directRoute;
+  let bestCost = directCost;
+
+  for (const alt of alternatives) {
+    const cost = calculateRouteCost(alt.coordinates, alt.distance, alt.duration, incidents);
+    if (cost < bestCost) {
+      bestCost = cost;
+      bestRoute = alt;
+    }
+  }
+
+  const avoided = bestRoute !== directRoute;
+  console.log(`✅ Route calculated${avoided ? " (incident-avoidant)" : ""}: ${(bestRoute.distance / 1000).toFixed(1)}km, ${Math.round(bestRoute.duration / 60)}min`);
+
+  return bestRoute;
 }
 
 /**
@@ -630,22 +707,21 @@ export async function searchPlaces(query: string): Promise<Array<{
 }>> {
   try {
     const response = await fetch(
-      `https://nominatim.openstreetmap.org/search?format=json&q=${encodeURIComponent(query)}&limit=5`,
-      {
-        headers: {
-          'User-Agent': 'SafeTrekXR-App'
-        }
-      }
+      `https://photon.komoot.io/api/?q=${encodeURIComponent(query)}&limit=5`,
+      { headers: { 'User-Agent': 'CrisGo/1.0' } }
     );
-    
     const data = await response.json();
-    
-    return data.map((item: any) => ({
-      name: item.name || item.display_name.split(',')[0],
-      lat: parseFloat(item.lat),
-      lng: parseFloat(item.lon),
-      display_name: item.display_name
-    }));
+    return (data.features || []).map((f: any) => {
+      const p = f.properties || {};
+      const [lng, lat] = f.geometry?.coordinates || [0, 0];
+      const parts = [p.name, p.city, p.state, p.country].filter(Boolean);
+      return {
+        name: p.name || p.city || query,
+        lat,
+        lng,
+        display_name: parts.join(', '),
+      };
+    });
   } catch (error) {
     console.error('Place search error:', error);
     return [];

@@ -16,14 +16,28 @@ L.Icon.Default.mergeOptions({
 
 interface Incident {
   id: string;
-  type?: "hazard";
+  type?: string;
   lat: number;
   lng: number;
   title: string;
   credibility: "high" | "medium" | "low";
   description?: string;
-  distance?: string;
+  distance?: number;
+  severity?: string;
+  timestamp?: string;
   reports_count?: number;
+  source?: {
+    name: string;
+    type: string;
+    reliability: number;
+  };
+  credibility_scores?: {
+    overall: number;
+    prompt_v1?: number;
+    prompt_v2?: number;
+    source_reliability?: number;
+    temporal_relevance?: number;
+  };
 }
 
 interface RouteData {
@@ -41,6 +55,7 @@ interface RouteData {
 
 interface MapViewProps {
   onIncidentClick: (incident: Incident | null) => void;
+  onDeleteIncident?: (id: string) => void;
   selectedIncident: Incident | null;
   showIncidents: boolean;
   routeData?: RouteData | null;
@@ -54,166 +69,68 @@ interface MapViewProps {
 // NYC center coordinates
 const NYC_CENTER: [number, number] = [40.7128, -74.0060];
 
-// Custom marker icons
-const createCustomIcon = (type: string, credibility: string, isUserReport: boolean = false) => {
-  // For high credibility: lighter red outer with darker red inner
-  if (credibility === "high") {
-    const microphoneBadge = isUserReport ? `
-      <div style="
-        position: absolute;
-        top: -6px;
-        right: -6px;
-        width: 20px;
-        height: 20px;
-        background: #3B82F6;
-        border: 2px solid white;
-        border-radius: 50%;
-        display: flex;
-        align-items: center;
-        justify-content: center;
-        box-shadow: 0 2px 8px rgba(59, 130, 246, 0.6);
-        z-index: 10;
-      ">
-        <svg width="10" height="10" viewBox="0 0 24 24" fill="white" xmlns="http://www.w3.org/2000/svg">
-          <path d="M12 2a3 3 0 0 0-3 3v7a3 3 0 0 0 6 0V5a3 3 0 0 0-3-3Z"/>
-          <path d="M19 10v2a7 7 0 0 1-14 0v-2"/>
-          <line x1="12" y1="19" x2="12" y2="23"/>
-        </svg>
-      </div>
-    ` : '';
+// Severity color schemes — outer matches severity, not all red
+const SEVERITY_STYLES: Record<string, { outer: string; inner: string; shadow: string }> = {
+  high:   { outer: "#fee2e2", inner: "#dc2626", shadow: "rgba(220,38,38,0.4)" },
+  medium: { outer: "#fef9c3", inner: "#ca8a04", shadow: "rgba(202,138,4,0.3)" },
+  low:    { outer: "#dcfce7", inner: "#16a34a", shadow: "rgba(22,163,74,0.3)" },
+};
 
-    return L.divIcon({
-      className: "custom-marker",
-      html: `
-        <div style="position: relative;">
-          <div style="
-            width: 40px;
-            height: 40px;
-            background: #f87171;
-            border: 3px solid white;
-            border-radius: 50%;
-            box-shadow: 0 4px 12px rgba(0,0,0,0.4);
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            ${isUserReport ? 'animation: user-report-pulse 2s ease-in-out infinite;' : ''}
-          ">
-            <div style="
-              width: 16px;
-              height: 16px;
-              background: #dc2626;
-              border-radius: 50%;
-            "></div>
-          </div>
-          ${microphoneBadge}
-        </div>
-        ${isUserReport ? `
-          <style>
-            @keyframes user-report-pulse {
-              0%, 100% { transform: scale(1); box-shadow: 0 4px 12px rgba(0,0,0,0.4); }
-              50% { transform: scale(1.1); box-shadow: 0 4px 20px rgba(59, 130, 246, 0.6); }
-            }
-          </style>
-        ` : ''}
-      `,
-      iconSize: [40, 40],
-      iconAnchor: [20, 20],
-    });
-  }
-  
-  // Medium and low credibility with colored inner circles
-  const innerColors = {
-    medium: "#facc15",    // yellow-400
-    low: "#22c55e"        // green-500
-  };
-  
-  const innerColor = innerColors[credibility as keyof typeof innerColors] || "#facc15";
-  
+const TYPE_ICON_PATHS: Record<string, string> = {
+  earthquake: '<circle cx="8" cy="8" r="3" fill="none" stroke="#1e293b" stroke-width="1.5"/><path d="M8 1v2M8 13v2M1 8h2M13 8h2" stroke="#1e293b" stroke-width="1.5"/>',
+  fire: '<path d="M8 2c0 3-4 5-4 8a4 4 0 008 0c0-3-4-5-4-8z" fill="#1e293b" opacity="0.9"/>',
+  flooding: '<path d="M2 10c1.5-1.5 3-1.5 4.5 0s3 1.5 4.5 0M2 13c1.5-1.5 3-1.5 4.5 0s3 1.5 4.5 0" stroke="#1e293b" stroke-width="1.5" fill="none"/>',
+  traffic: '<rect x="3" y="2" width="10" height="12" rx="2" fill="none" stroke="#1e293b" stroke-width="1.2"/><circle cx="8" cy="5" r="1.5" fill="#1e293b"/><circle cx="8" cy="11" r="1.5" fill="#1e293b"/>',
+  power_outage: '<path d="M9 2L5 9h3l-1 5 4-7H8l1-5z" fill="#1e293b"/>',
+  gas_leak: '<circle cx="8" cy="6" r="3" fill="none" stroke="#1e293b" stroke-width="1.2"/><path d="M6 9c-1 2-1 4 0 5M10 9c1 2 1 4 0 5" stroke="#1e293b" stroke-width="1.2" fill="none"/>',
+};
+
+const createCustomIcon = (type: string = "hazard", credibility: string, isUserReport: boolean = false) => {
+  const style = SEVERITY_STYLES[credibility] || SEVERITY_STYLES.medium;
+  const iconPath = TYPE_ICON_PATHS[type] || '';
+  const size = 30;
+  const innerSize = 18;
+
+  const iconSvg = iconPath
+    ? `<svg viewBox="0 0 16 16" width="12" height="12" style="position:absolute;top:50%;left:50%;transform:translate(-50%,-50%)">${iconPath}</svg>`
+    : '';
+
   const microphoneBadge = isUserReport ? `
-    <div style="
-      position: absolute;
-      top: -6px;
-      right: -6px;
-      width: 20px;
-      height: 20px;
-      background: #3B82F6;
-      border: 2px solid white;
-      border-radius: 50%;
-      display: flex;
-      align-items: center;
-      justify-content: center;
-      box-shadow: 0 2px 8px rgba(59, 130, 246, 0.6);
-      z-index: 10;
-    ">
-      <svg width="10" height="10" viewBox="0 0 24 24" fill="white" xmlns="http://www.w3.org/2000/svg">
-        <path d="M12 2a3 3 0 0 0-3 3v7a3 3 0 0 0 6 0V5a3 3 0 0 0-3-3Z"/>
-        <path d="M19 10v2a7 7 0 0 1-14 0v-2"/>
-        <line x1="12" y1="19" x2="12" y2="23"/>
-      </svg>
-    </div>
-  ` : '';
-  
+    <div style="position:absolute;top:-4px;right:-4px;width:16px;height:16px;background:#3B82F6;border:2px solid white;border-radius:50%;display:flex;align-items:center;justify-content:center;box-shadow:0 1px 4px rgba(59,130,246,0.5);z-index:10">
+      <svg width="8" height="8" viewBox="0 0 24 24" fill="white"><path d="M12 2a3 3 0 00-3 3v7a3 3 0 006 0V5a3 3 0 00-3-3z"/><path d="M19 10v2a7 7 0 01-14 0v-2" fill="none" stroke="white" stroke-width="2"/></svg>
+    </div>` : '';
+
   return L.divIcon({
     className: "custom-marker",
     html: `
-      <div style="position: relative;">
+      <div style="position:relative;width:${size}px;height:${size}px">
         <div style="
-          width: 40px;
-          height: 40px;
-          background: #f87171;
-          border: 3px solid white;
-          border-radius: 50%;
-          box-shadow: 0 4px 12px rgba(0,0,0,0.4);
-          display: flex;
-          align-items: center;
-          justify-content: center;
-          ${isUserReport ? 'animation: user-report-pulse 2s ease-in-out infinite;' : ''}
+          width:${size}px;height:${size}px;
+          background:${style.outer};
+          border:2px solid white;
+          border-radius:50%;
+          box-shadow:0 2px 8px ${style.shadow}, 0 1px 3px rgba(0,0,0,0.15);
+          display:flex;align-items:center;justify-content:center;
         ">
           <div style="
-            width: 16px;
-            height: 16px;
-            background: ${innerColor};
-            border-radius: 50%;
-          "></div>
+            position:relative;
+            width:${innerSize}px;height:${innerSize}px;
+            background:${style.inner};
+            border-radius:50%;
+          ">${iconSvg}</div>
         </div>
         ${microphoneBadge}
-      </div>
-      ${isUserReport ? `
-        <style>
-          @keyframes user-report-pulse {
-            0%, 100% { transform: scale(1); box-shadow: 0 4px 12px rgba(0,0,0,0.4); }
-            50% { transform: scale(1.1); box-shadow: 0 4px 20px rgba(59, 130, 246, 0.6); }
-          }
-        </style>
-      ` : ''}
-    `,
-    iconSize: [40, 40],
-    iconAnchor: [20, 20],
+      </div>`,
+    iconSize: [size, size],
+    iconAnchor: [size / 2, size / 2],
   });
 };
 
-// Transport mode color configuration - Google Maps style
 const TRANSPORT_COLORS = {
-  driving: {
-    main: "#4285F4",      // Google Maps blue
-    border: "#1a73e8",
-    lighter: "#93BAF8"
-  },
-  transit: {
-    main: "#34A853",      // Google Maps green
-    border: "#0F9D58",
-    lighter: "#81C995"
-  },
-  walking: {
-    main: "#FBBC04",      // Google Maps yellow/orange
-    border: "#F9AB00",
-    lighter: "#FDD663"
-  },
-  cycling: {
-    main: "#9334E9",      // Purple for cycling
-    border: "#7E22CE",
-    lighter: "#C084FC"
-  }
+  driving:  { main: "#2563eb", border: "#1d4ed8", lighter: "#93c5fd" },
+  transit:  { main: "#2563eb", border: "#1d4ed8", lighter: "#93c5fd" },
+  walking:  { main: "#ea580c", border: "#c2410c", lighter: "#fdba74" },
+  cycling:  { main: "#16a34a", border: "#15803d", lighter: "#86efac" },
 };
 
 // Google Maps-style start/end markers
@@ -229,7 +146,7 @@ const createRouteMarker = (label: string, color: string) => {
           border: 4px solid white;
           border-radius: 50% 50% 50% 0;
           transform: rotate(-45deg);
-          box-shadow: 0 4px 12px rgba(0,0,0,0.4);
+          box-shadow: 0 4px 12px rgba(0,0,0,0.15);
           display: flex;
           align-items: center;
           justify-content: center;
@@ -262,7 +179,7 @@ const createCurrentLocationIcon = () => {
           transform: translate(-50%, -50%);
           width: 32px;
           height: 32px;
-          background: rgba(66, 133, 244, 0.2);
+          background: rgba(148, 163, 184, 0.2);
           border-radius: 50%;
           animation: pulse 2s ease-in-out infinite;
         "></div>
@@ -273,10 +190,10 @@ const createCurrentLocationIcon = () => {
           transform: translate(-50%, -50%);
           width: 16px;
           height: 16px;
-          background: #4285F4;
+          background: #94a3b8;
           border: 3px solid white;
           border-radius: 50%;
-          box-shadow: 0 2px 8px rgba(0,0,0,0.3);
+          box-shadow: 0 2px 8px rgba(0,0,0,0.15);
         "></div>
       </div>
       <style>
@@ -324,9 +241,10 @@ function MapController({ routeData, currentLocation, isNavigating }: {
   return null;
 }
 
-export default function MapView({ 
-  onIncidentClick, 
-  selectedIncident, 
+export default function MapView({
+  onIncidentClick,
+  onDeleteIncident,
+  selectedIncident,
   showIncidents,
   routeData = null,
   alternativeRoute = null,
@@ -472,59 +390,62 @@ export default function MapView({
             }}
           >
             <Popup>
-              <div className="text-sm min-w-[200px]">
-                <h3 className="font-bold mb-2 text-base">{incident.title}</h3>
-                
-                {/* Location */}
-                <div className="flex items-start gap-2 mb-2 text-gray-700 dark:text-gray-300">
-                  <MapPin className="w-4 h-4 mt-0.5 flex-shrink-0 text-blue-500" />
-                  <div className="text-xs">
-                    <div className="font-medium">Location:</div>
-                    <div className="text-gray-600 dark:text-gray-400">
-                      {incident.lat.toFixed(4)}, {incident.lng.toFixed(4)}
-                    </div>
-                  </div>
+              <div className="text-sm min-w-[220px] max-w-[280px]">
+                <h3 className="font-bold text-sm text-gray-900 leading-snug mb-2">{incident.title}</h3>
+
+                <div className="flex flex-wrap gap-1.5 mb-2">
+                  <span className="capitalize text-[11px] font-medium px-2 py-0.5 rounded-full bg-gray-100 text-gray-600">
+                    {incident.type || "hazard"}
+                  </span>
+                  <span className={`text-[11px] font-semibold px-2 py-0.5 rounded-full ${
+                    incident.credibility === "high" ? "bg-red-100 text-red-700" :
+                    incident.credibility === "medium" ? "bg-amber-100 text-amber-700" :
+                    "bg-emerald-100 text-emerald-700"
+                  }`}>
+                    {incident.credibility} severity
+                  </span>
                 </div>
 
-                {/* Incident Type */}
-                <div className="flex items-start gap-2 mb-2 text-gray-700 dark:text-gray-300">
-                  <AlertTriangle className="w-4 h-4 mt-0.5 flex-shrink-0 text-orange-500" />
-                  <div className="text-xs">
-                    <div className="font-medium">Type:</div>
-                    <div className="text-gray-600 dark:text-gray-400 capitalize">
-                      {incident.type || "hazard"}
-                    </div>
-                  </div>
-                </div>
-
-                {/* Reports Count */}
-                {incident.reports_count !== undefined && (
-                  <div className="flex items-start gap-2 mb-3 text-gray-700 dark:text-gray-300">
-                    <Users className="w-4 h-4 mt-0.5 flex-shrink-0 text-green-500" />
-                    <div className="text-xs">
-                      <div className="font-medium">Reports:</div>
-                      <div className="text-gray-600 dark:text-gray-400">
-                        {incident.reports_count} {incident.reports_count === 1 ? "person" : "people"} reported this
-                      </div>
-                    </div>
-                  </div>
-                )}
-
-                {/* Description */}
                 {incident.description && (
-                  <p className="text-gray-600 dark:text-gray-400 mb-3 text-xs">
-                    {incident.description}
-                  </p>
+                  <p className="text-gray-500 text-xs mb-2 line-clamp-2">{incident.description}</p>
                 )}
 
-                {/* Credibility Badge */}
-                <span className={`inline-block px-2 py-1 rounded text-xs font-medium ${
-                  incident.credibility === "high" ? "bg-red-100 text-red-800 dark:bg-red-900/30 dark:text-red-300" :
-                  incident.credibility === "medium" ? "bg-orange-100 text-orange-800 dark:bg-orange-900/30 dark:text-orange-300" :
-                  "bg-yellow-100 text-yellow-800 dark:bg-yellow-900/30 dark:text-yellow-300"
-                }`}>
-                  {incident.credibility} credibility
-                </span>
+                <div className="flex items-center gap-3 text-[11px] text-gray-400 mb-2">
+                  <span className="flex items-center gap-1">
+                    <MapPin className="w-3 h-3" />
+                    {incident.lat.toFixed(4)}, {incident.lng.toFixed(4)}
+                  </span>
+                  {incident.reports_count !== undefined && (
+                    <span className="flex items-center gap-1">
+                      <Users className="w-3 h-3" />
+                      {incident.reports_count} report{incident.reports_count !== 1 ? "s" : ""}
+                    </span>
+                  )}
+                </div>
+
+                {incident.source && (
+                  <div className="flex items-center gap-2 pt-2 border-t border-gray-100">
+                    <span className={`text-[10px] font-medium px-1.5 py-0.5 rounded ${
+                      incident.source.type === "official" ? "bg-blue-50 text-blue-600" :
+                      incident.source.type === "news" ? "bg-purple-50 text-purple-600" :
+                      "bg-gray-50 text-gray-500"
+                    }`}>
+                      {incident.source.name}
+                    </span>
+                    <span className="text-[10px] text-gray-400">
+                      {Math.round(incident.source.reliability * 100)}% reliable
+                    </span>
+                  </div>
+                )}
+
+                {String(incident.id).startsWith("user-report-") && onDeleteIncident && (
+                  <button
+                    onClick={() => onDeleteIncident(String(incident.id))}
+                    className="mt-2 w-full text-[11px] font-medium text-red-500 hover:text-red-700 hover:bg-red-50 border border-red-200 rounded py-1 transition-colors"
+                  >
+                    Delete my report
+                  </button>
+                )}
               </div>
             </Popup>
           </Marker>
@@ -533,41 +454,47 @@ export default function MapView({
 
       {/* Selected incident details overlay */}
       {selectedIncident && (
-        <div className={`absolute bottom-8 left-8 right-8 rounded-xl p-6 shadow-2xl border z-[1000] ${
-          selectedIncident.credibility === "high" ? "bg-red-50 dark:bg-red-950/50 border-red-200 dark:border-red-500/30" :
-          selectedIncident.credibility === "medium" ? "bg-yellow-50 dark:bg-yellow-950/50 border-yellow-200 dark:border-yellow-500/30" :
-          "bg-green-50 dark:bg-green-950/50 border-green-200 dark:border-green-500/30"
+        <div className={`absolute bottom-6 left-6 right-6 lg:left-auto lg:right-6 lg:w-96 rounded-2xl p-5 shadow-xl border z-[1000] bg-white/95 backdrop-blur-sm ${
+          selectedIncident.credibility === "high" ? "border-red-200" :
+          selectedIncident.credibility === "medium" ? "border-amber-200" :
+          "border-emerald-200"
         }`}>
           <button
             onClick={() => onIncidentClick(null)}
-            className="absolute top-4 right-4 text-gray-400 hover:text-gray-600 dark:hover:text-white"
+            className="absolute top-3 right-3 p-1 rounded-lg text-gray-400 hover:text-gray-600 hover:bg-gray-100 transition-colors"
           >
-            <X className="w-5 h-5" />
+            <X className="w-4 h-4" />
           </button>
-          <div className="flex items-start gap-4">
-            <div className={`p-3 rounded-lg ${
-              selectedIncident.credibility === "high" ? "bg-red-500/20" :
-              selectedIncident.credibility === "medium" ? "bg-yellow-500/20" :
-              "bg-green-500/20"
+          <div className="flex items-start gap-3">
+            <div className={`p-2.5 rounded-xl ${
+              selectedIncident.credibility === "high" ? "bg-red-100" :
+              selectedIncident.credibility === "medium" ? "bg-amber-100" :
+              "bg-emerald-100"
             }`}>
-              <AlertTriangle className={`w-6 h-6 ${
-                selectedIncident.credibility === "high" ? "text-red-400" :
-                selectedIncident.credibility === "medium" ? "text-yellow-400" :
-                "text-green-400"
+              <AlertTriangle className={`w-5 h-5 ${
+                selectedIncident.credibility === "high" ? "text-red-600" :
+                selectedIncident.credibility === "medium" ? "text-amber-600" :
+                "text-emerald-600"
               }`} />
             </div>
-            <div className="flex-1">
-              <h3 className="text-xl font-bold text-gray-900 dark:text-white mb-2">{selectedIncident.title}</h3>
-              <p className="text-gray-600 dark:text-gray-300 mb-3">{selectedIncident.description}</p>
-              <div className="flex gap-4 text-sm">
-                <span className="text-gray-500 dark:text-gray-400">Distance: {selectedIncident.distance}</span>
-                <span className={`font-medium ${
-                  selectedIncident.credibility === "high" ? "text-red-400" :
-                  selectedIncident.credibility === "medium" ? "text-yellow-400" :
-                  "text-green-400"
+            <div className="flex-1 min-w-0">
+              <h3 className="text-base font-bold text-gray-900 mb-1 pr-6">{selectedIncident.title}</h3>
+              {selectedIncident.description && (
+                <p className="text-gray-500 text-sm mb-2 line-clamp-2">{selectedIncident.description}</p>
+              )}
+              <div className="flex flex-wrap items-center gap-2">
+                <span className={`text-xs font-semibold px-2 py-0.5 rounded-full ${
+                  selectedIncident.credibility === "high" ? "bg-red-100 text-red-700" :
+                  selectedIncident.credibility === "medium" ? "bg-amber-100 text-amber-700" :
+                  "bg-emerald-100 text-emerald-700"
                 }`}>
-                  {selectedIncident.credibility.toUpperCase()} Credibility
+                  {selectedIncident.credibility} severity
                 </span>
+                {selectedIncident.source && (
+                  <span className="text-xs text-gray-400">
+                    via {selectedIncident.source.name}
+                  </span>
+                )}
               </div>
             </div>
           </div>

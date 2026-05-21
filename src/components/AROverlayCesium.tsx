@@ -51,7 +51,9 @@ export default function AROverlayCesium({
           Cesium.Ion.defaultAccessToken = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJqdGkiOiJlYWE1OWUxNy1mMWZiLTQzYjYtYTQ0OS1kMWFjYmFkNjc5YzciLCJpZCI6NTc3MzMsImlhdCI6MTYyNzg0NTE4Mn0.XcKpgANiY19MC4bdFUXMVEBToBmqS8kuYpUlxJHYZxk";
           
           viewer = new Cesium.Viewer(cesiumContainerRef.current, {
+            // @ts-expect-error — Cesium API version mismatch
             terrainProvider: Cesium.createWorldTerrain(),
+            // @ts-expect-error — Cesium API version mismatch
             imageryProvider: new Cesium.IonImageryProvider({ assetId: 2 }),
             baseLayerPicker: false,
             geocoder: false,

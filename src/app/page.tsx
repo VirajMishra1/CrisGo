@@ -6,14 +6,16 @@ import TopNav from "@/components/TopNav";
 import MapLegend from "@/components/MapLegend";
 import RouteInfoCard from "@/components/RouteInfoCard";
 import CredibilityViewer from "@/components/CredibilityViewer";
+import IncidentFilters from "@/components/IncidentFilters";
 import VoiceReportDialog from "@/components/VoiceReportDialog";
+import MapSkeleton from "@/components/MapSkeleton";
+import ErrorBoundary from "@/components/ErrorBoundary";
 import { geocodeAddress, getRoute, type RouteResult, type TransportMode, type Incident } from "@/lib/routing";
-import { generateAllIncidents, type IncidentData } from "@/data/generate-incidents-data";
 import { speakText } from "@/lib/tts";
 import { toast } from "sonner";
 
 // Dynamically import components that need browser APIs (Leaflet, camera, etc.)
-const MapView = dynamicImport(() => import("@/components/MapView"), { ssr: false });
+const MapView = dynamicImport(() => import("@/components/MapView"), { ssr: false, loading: () => <MapSkeleton /> });
 const AROverlay = dynamicImport(() => import("@/components/AROverlay"), { ssr: false });
 
 // Prevent static generation
@@ -58,77 +60,141 @@ export default function Home() {
   const [showVoiceReportDialog, setShowVoiceReportDialog] = useState(false);
   const [reportedIncidents, setReportedIncidents] = useState<Incident[]>([]);
 
+  // Incident filter state
+  const [filterTypes, setFilterTypes] = useState<Set<string>>(new Set());
+  const [filterSeverities, setFilterSeverities] = useState<Set<string>>(new Set(["high", "medium", "low"]));
+  const [filterSources, setFilterSources] = useState<Set<string>>(new Set());
+
   // Set mounted state after client-side hydration
   useEffect(() => {
     setIsMounted(true);
   }, []);
 
-  // Generate incidents on mount
+  // Fetch real incidents from API on mount
   useEffect(() => {
     if (!isMounted) return;
-    
-    const incidents = generateAllIncidents();
-    // Convert to Incident format for compatibility
-    const convertedIncidents: Incident[] = incidents.map((inc: IncidentData) => ({
-      id: inc.id,
-      type: inc.type as any,
-      lat: inc.lat,
-      lng: inc.lng,
-      title: inc.title,
-      credibility: inc.credibility,
-      description: inc.description,
-      distance: inc.distance,
-      severity: inc.severity,
-      timestamp: inc.timestamp,
-      source: inc.source || { name: "Unknown", type: "user_report", reliability: 0.5 },
-      credibility_scores: inc.credibility_scores || {
-        overall: 0.5,
-        prompt_v1: 0.5,
-        prompt_v2: 0.5,
-        source_reliability: 0.5,
-        temporal_relevance: 0.5
-      }
-    }));
-    setAllIncidents(convertedIncidents);
-    
-    // Sample incidents EQUALLY for balanced display (red, yellow, green dots distributed evenly)
-    const highCredibility = convertedIncidents.filter(i => i.credibility === "high");
-    const mediumCredibility = convertedIncidents.filter(i => i.credibility === "medium");
-    const lowCredibility = convertedIncidents.filter(i => i.credibility === "low");
-    
-    // Calculate equal sampling rate to show roughly the same amount of each
-    const targetPerCategory = 50; // Show ~50 of each color for balance
-    const sampled = [
-      ...highCredibility.filter((_, i) => i % Math.ceil(highCredibility.length / targetPerCategory) === 0),
-      ...mediumCredibility.filter((_, i) => i % Math.ceil(mediumCredibility.length / targetPerCategory) === 0),
-      ...lowCredibility.filter((_, i) => i % Math.ceil(lowCredibility.length / targetPerCategory) === 0)
-    ];
-    
-    // Add test incident at user's current location for testing AR overlay
-    const testIncident: Incident = {
-      id: "test-location-incident",
-      type: "hazard" as any,
-      lat: 40.807101388941604,
-      lng: -73.96397002082942,
-      title: "Test Incident at Your Location",
-      credibility: "high",
-      description: "This is a test incident placed at your exact location to test the AR overlay feature",
-      distance: "0 m",
-      severity: "high" as any,
-      timestamp: new Date().toISOString(),
-      source: { name: "Test", type: "user_report", reliability: 1.0 },
-      credibility_scores: {
-        overall: 1.0,
-        prompt_v1: 1.0,
-        prompt_v2: 1.0,
-        source_reliability: 1.0,
-        temporal_relevance: 1.0
+
+    const fetchIncidents = async () => {
+      try {
+        const resp = await fetch("/api/incidents?mode=events");
+        if (!resp.ok) throw new Error(`API returned ${resp.status}`);
+        const data = await resp.json();
+
+        const events = data.events || [];
+        const raw = events.length > 0 ? events : (data.incidents || []);
+
+        const credMap: Record<string, "high" | "medium" | "low"> = {
+          high: "high", medium: "medium", low: "low",
+        };
+        const sourceReliability: Record<string, number> = {
+          "USGS": 1.0, "National Weather Service": 1.0, "GDACS": 0.95,
+          "NYC 311 Open Data": 0.85, "Google News": 0.75, "Reddit": 0.55,
+        };
+
+        const convertedIncidents: Incident[] = raw.map((item: any) => {
+          const isEvent = !!item.event_id;
+          const sourceName = isEvent
+            ? (item.source_names?.[0] || "Unknown")
+            : (item.source || "Unknown");
+          const sourceType = isEvent
+            ? (item.sources?.[0]?.source_type || "official")
+            : (item.source_type || "official");
+          const rel = sourceReliability[sourceName] || 0.7;
+          const corr = item.corroboration_count || 1;
+
+          const credScore = item.credibility?.final_score
+            ? item.credibility.final_score / 5.0
+            : rel;
+
+          return {
+            id: item.event_id || item.id,
+            type: item.type || "hazard",
+            lat: item.lat,
+            lng: item.lng,
+            title: item.title || item.description || "Incident",
+            credibility: credMap[item.severity] || "medium",
+            description: item.description || "",
+            distance: 0,
+            severity: item.severity || "medium",
+            timestamp: item.last_reported || item.first_reported || item.timestamp || new Date().toISOString(),
+            reports_count: corr,
+            source: { name: sourceName, type: sourceType, reliability: rel },
+            credibility_scores: {
+              overall: credScore,
+              prompt_v1: credScore,
+              prompt_v2: credScore,
+              source_reliability: rel,
+              temporal_relevance: item.credibility?.temporal_decay || 0.9,
+              corroboration: Math.min(corr / 5.0, 1.0),
+            },
+          };
+        });
+
+        setAllIncidents(convertedIncidents);
+      } catch (error) {
+        console.error("Failed to fetch incidents:", error);
+        toast.error("Failed to load live incident data");
       }
     };
-    
-    setDisplayIncidents([...sampled, testIncident]);
-    console.log(`✅ Loaded ${incidents.length} incidents (displaying ${sampled.length + 1} on map: ~${Math.floor(sampled.length/3)} per color + 1 test incident)`);
+
+    fetchIncidents();
+    const interval = setInterval(fetchIncidents, 5 * 60 * 1000);
+    return () => clearInterval(interval);
   }, [isMounted]);
+
+  // Initialize filter sets when incidents load
+  useEffect(() => {
+    if (allIncidents.length === 0) return;
+    const types = new Set(allIncidents.map(i => i.type || "hazard"));
+    const sources = new Set(allIncidents.map(i => i.source?.name).filter(Boolean) as string[]);
+    setFilterTypes(types);
+    setFilterSources(sources);
+    setFilterSeverities(new Set(["high", "medium", "low"]));
+  }, [allIncidents]);
+
+  // Apply filters to displayIncidents
+  useEffect(() => {
+    const combined = [...allIncidents, ...reportedIncidents];
+    const filtered = combined.filter(i => {
+      const type = i.type || "hazard";
+      const sev = i.severity || i.credibility || "medium";
+      const src = i.source?.name || "";
+      return filterTypes.has(type) && filterSeverities.has(sev) && (filterSources.size === 0 || filterSources.has(src));
+    });
+    setDisplayIncidents(filtered);
+  }, [allIncidents, reportedIncidents, filterTypes, filterSeverities, filterSources]);
+
+  const handleToggleType = (type: string) => {
+    setFilterTypes(prev => {
+      const next = new Set(prev);
+      next.has(type) ? next.delete(type) : next.add(type);
+      return next;
+    });
+  };
+
+  const handleToggleSeverity = (severity: string) => {
+    setFilterSeverities(prev => {
+      const next = new Set(prev);
+      next.has(severity) ? next.delete(severity) : next.add(severity);
+      return next;
+    });
+  };
+
+  const handleToggleSource = (source: string) => {
+    setFilterSources(prev => {
+      const next = new Set(prev);
+      next.has(source) ? next.delete(source) : next.add(source);
+      return next;
+    });
+  };
+
+  const handleClearFilters = () => {
+    const types = new Set(allIncidents.map(i => i.type || "hazard"));
+    const sources = new Set(allIncidents.map(i => i.source?.name).filter(Boolean) as string[]);
+    setFilterTypes(types);
+    setFilterSources(sources);
+    setFilterSeverities(new Set(["high", "medium", "low"]));
+  };
 
   // Start navigation and location tracking
   const handleStartNavigation = () => {
@@ -383,9 +449,8 @@ export default function Home() {
       reports_count: incident.reports_count
     };
 
-    // Add to reported incidents and display incidents
     setReportedIncidents(prev => [...prev, newIncident]);
-    setDisplayIncidents(prev => [...prev, newIncident]);
+    setFilterSources(prev => new Set([...prev, "User Report (Voice)"]));
     
     // Close dialog
     setShowVoiceReportDialog(false);
@@ -397,8 +462,8 @@ export default function Home() {
   // Show loading state during SSR
   if (!isMounted) {
     return (
-      <div className="relative w-screen h-screen overflow-hidden bg-slate-900 flex items-center justify-center">
-        <div className="text-white text-lg">Loading...</div>
+      <div className="relative w-screen h-screen overflow-hidden bg-slate-900">
+        <MapSkeleton />
       </div>
     );
   }
@@ -414,42 +479,58 @@ export default function Home() {
       />
 
       <div className="absolute top-[57px] lg:top-[73px] left-0 right-0 bottom-0">
-        {currentView === "dashboard" ? (
-          <div className="relative w-full h-full">
-            <MapView
-              onIncidentClick={setSelectedIncident}
-              selectedIncident={selectedIncident}
-              showIncidents={showIncidents}
-              routeData={routeData}
-              alternativeRoute={alternativeRoute}
-              transportMode={currentTransportMode}
+        <ErrorBoundary fallbackTitle="Map failed to load">
+          {currentView === "dashboard" ? (
+            <div className="relative w-full h-full">
+              <MapView
+                onIncidentClick={setSelectedIncident}
+                onDeleteIncident={(id) => {
+                  setReportedIncidents(prev => prev.filter(i => i.id !== id));
+                  setSelectedIncident(null);
+                }}
+                selectedIncident={selectedIncident}
+                showIncidents={showIncidents}
+                routeData={routeData}
+                alternativeRoute={alternativeRoute}
+                transportMode={currentTransportMode}
+                currentLocation={currentLocation}
+                isNavigating={isNavigating}
+                incidents={displayIncidents}
+              />
+              <MapLegend showIncidents={showIncidents} onToggleIncidents={handleToggleIncidents} />
+              <IncidentFilters
+                incidents={allIncidents}
+                activeTypes={filterTypes}
+                activeSeverities={filterSeverities}
+                activeSources={filterSources}
+                onToggleType={handleToggleType}
+                onToggleSeverity={handleToggleSeverity}
+                onToggleSource={handleToggleSource}
+                onClearAll={handleClearFilters}
+              />
+              {routeData && (
+                <RouteInfoCard
+                  routeInfo={routeData}
+                  transportMode={currentTransportMode}
+                  isNavigating={isNavigating}
+                  onStartNavigation={handleStartNavigation}
+                  onStopNavigation={handleStopNavigation}
+                />
+              )}
+              <CredibilityViewer incidents={allIncidents} />
+            </div>
+          ) : (
+            <AROverlay
               currentLocation={currentLocation}
-              isNavigating={isNavigating}
+              routeCoordinates={routeData?.coordinates || []}
+              routeSteps={routeData?.steps}
+              currentStepIndex={0}
+              totalRouteDistance={routeData?.distance || 0}
+              totalRouteDuration={routeData?.duration || 0}
               incidents={displayIncidents}
             />
-            <MapLegend showIncidents={showIncidents} onToggleIncidents={handleToggleIncidents} />
-            {routeData && (
-              <RouteInfoCard 
-                routeInfo={routeData} 
-                transportMode={currentTransportMode}
-                isNavigating={isNavigating}
-                onStartNavigation={handleStartNavigation}
-                onStopNavigation={handleStopNavigation}
-              />
-            )}
-            <CredibilityViewer incidents={allIncidents} />
-          </div>
-        ) : (
-          <AROverlay 
-            currentLocation={currentLocation}
-            routeCoordinates={routeData?.coordinates || []}
-            routeSteps={routeData?.steps}
-            currentStepIndex={0}
-            totalRouteDistance={routeData?.distance || 0}
-            totalRouteDuration={routeData?.duration || 0}
-            incidents={displayIncidents}
-          />
-        )}
+          )}
+        </ErrorBoundary>
       </div>
 
       {/* Voice Report Dialog */}

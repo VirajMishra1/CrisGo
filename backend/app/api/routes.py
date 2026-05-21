@@ -8,9 +8,14 @@ from app.models import Signal, Incident
 from app.schemas import SignalCreate, SignalOut, IncidentCreate, IncidentOut, RouteRequest, RouteResponse, RouteLeg
 from app.agents.credibility import simple_credibility_score, merge_incident
 from app.services.routing import choose_safest_route
-from app.services.ingest import run_ingestion, ingest_items, fetch_noaa_nws_alerts, fetch_usgs_quakes, fetch_reddit_incidents, fetch_tavily_news, run_scrape_and_summarize, list_scraped_items, get_scraped_item
-from app.services.ny_incidents import list_ny_incidents_json, list_ny_sources_json
-from app.services.credibility_agent import get_prompts
+from app.services.ingest import (
+    run_ingestion, ingest_items, fetch_noaa_nws_alerts, fetch_usgs_quakes,
+    fetch_reddit_incidents, fetch_tavily_news, run_scrape_and_summarize,
+    list_scraped_items, get_scraped_item, fetch_all_incidents,
+)
+from app.services.ny_incidents import list_ny_incidents_json, list_ny_sources_json, save_live_incidents
+from app.services.credibility_agent import get_prompts, score_event, credibility_score_full
+from app.services.clustering import cluster_incidents
 from app.services.opik_bot import record_prompt_experiments, record_prompt_experiments_custom, list_logs
 from app.config import settings
 from app.models import CallSession
@@ -25,6 +30,25 @@ def health():
     return {"status": "ok"}
 
 
+# ─── Live Incident Endpoints ────────────────────────────────────────
+
+@router.get("/incidents/live")
+async def live_incidents():
+    """Fetch real-time incidents from all free public APIs."""
+    incidents = await fetch_all_incidents(include_global=True)
+    return {"count": len(incidents), "incidents": incidents}
+
+
+@router.post("/incidents/refresh")
+async def refresh_incidents(db: Session = Depends(get_db)):
+    """Re-fetch live data and update the DB."""
+    incidents = await fetch_all_incidents(include_global=True)
+    saved = save_live_incidents(db, incidents)
+    return {"refreshed": saved, "total_fetched": len(incidents)}
+
+
+# ─── Signal & Incident CRUD ─────────────────────────────────────────
+
 @router.post("/signals", response_model=SignalOut)
 def create_signal(payload: SignalCreate, db: Session = Depends(get_db)):
     sig = Signal(text=payload.text, source_type=payload.source_type, source_url=payload.source_url)
@@ -32,7 +56,6 @@ def create_signal(payload: SignalCreate, db: Session = Depends(get_db)):
     db.commit()
     db.refresh(sig)
 
-    # Optional: create incident if lat/lon present (demo convenience)
     if payload.lat is not None and payload.lon is not None:
         credibility = simple_credibility_score(payload.text)
         inc = Incident(
@@ -46,10 +69,9 @@ def create_signal(payload: SignalCreate, db: Session = Depends(get_db)):
             signal_id=sig.id,
         )
         merged = merge_incident(db, inc)
-        # Broadcast basic update
         try:
             import json
-            from app.config import settings
+            import asyncio
             msg = json.dumps({
                 "event": "incident_update",
                 "data": {
@@ -61,8 +83,6 @@ def create_signal(payload: SignalCreate, db: Session = Depends(get_db)):
                     "lon": merged.lon,
                 },
             })
-            # Fire and forget
-            import asyncio
             asyncio.create_task(manager.broadcast(msg))
         except Exception:
             pass
@@ -77,13 +97,11 @@ def list_incidents(db: Session = Depends(get_db)):
 
 @router.get("/ny_incidents")
 def ny_incidents(db: Session = Depends(get_db)):
-    # Returns aggregated incidents with credibility
     return list_ny_incidents_json(db)
 
 
 @router.get("/ny_sources")
 def ny_sources(db: Session = Depends(get_db)):
-    # Returns source-level entries (>1000), many pointing to the same incidents
     return list_ny_sources_json(db)
 
 
@@ -128,7 +146,6 @@ def dismiss_incident(incident_id: int, db: Session = Depends(get_db)):
 
 @router.post("/route", response_model=RouteResponse)
 async def route(req: RouteRequest, db: Session = Depends(get_db)):
-    # Gather active incidents (exclude dismissed)
     incidents = db.query(Incident).filter(Incident.status != "dismissed").all()
     incidents_view = [
         {"lat": i.lat, "lon": i.lon, "severity": float(i.severity), "credibility": float(i.credibility)}
@@ -144,22 +161,20 @@ async def route(req: RouteRequest, db: Session = Depends(get_db)):
     return RouteResponse(chosen_index=best_index, chosen_reason=reason, routes=response_routes)
 
 
-# Credibility prompts and experiments (Opik bot)
+# ─── Credibility Experiments ────────────────────────────────────────
+
 @router.get("/credibility/prompts")
 def credibility_prompts():
     return get_prompts()
 
 @router.get("/ny_credibility_experiments")
 def ny_credibility_experiments():
-    # Example sets: one real-like mix and one fake-like mix
     real_sources = ["NYPD", "FDNY", "ABC7NY", "NBC New York", "NY1"]
     fake_sources = ["Local Blog", "CitizenApp", "Scanner"]
     return record_prompt_experiments(real_sources, fake_sources)
 
 @router.post("/credibility/experiment")
 def credibility_experiment(payload: dict):
-    """Run an experiment using custom prompt texts and optional sources.
-    Body shape: {"prompts": {"v1": "...", "v2": "..."}, "real_sources": [...], "fake_sources": [...]}"""
     prompts = payload.get("prompts") or {}
     real_sources = payload.get("real_sources") or ["NYPD", "FDNY", "NY1"]
     fake_sources = payload.get("fake_sources") or ["Local Blog", "CitizenApp"]
@@ -168,3 +183,40 @@ def credibility_experiment(payload: dict):
 @router.get("/ny_credibility_logs")
 def ny_credibility_logs():
     return list_logs()
+
+
+# ─── Clustered Events + Full Credibility Pipeline ─────────────────────
+
+@router.get("/incidents/events")
+async def clustered_events(score: bool = False):
+    """Fetch live incidents, cluster into events, optionally score each."""
+    incidents = await fetch_all_incidents(include_global=True)
+    events = cluster_incidents(incidents)
+
+    if score:
+        for event in events:
+            event["credibility"] = score_event(event)
+    else:
+        for event in events:
+            event["credibility"] = {
+                "final_score": 0,
+                "confidence": 0,
+                "breakdown": "scoring skipped — pass ?score=true",
+            }
+
+    events.sort(key=lambda e: e.get("corroboration_count", 0), reverse=True)
+
+    return {
+        "count": len(events),
+        "total_raw_incidents": len(incidents),
+        "events": events,
+    }
+
+
+@router.post("/incidents/score")
+async def score_sources(payload: dict):
+    """Score credibility for arbitrary source list. Returns full breakdown."""
+    sources = payload.get("sources", [])
+    if not sources:
+        return {"error": "sources list required"}
+    return credibility_score_full(sources)

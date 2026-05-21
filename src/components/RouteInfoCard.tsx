@@ -16,28 +16,28 @@ interface RouteInfoCardProps {
 // Transport mode styling
 const TRANSPORT_STYLES = {
   driving: {
-    gradient: "from-blue-500 to-cyan-500",
+    btnColor: "bg-blue-600 hover:bg-blue-700",
     icon: Car,
     label: "Driving",
     bgColor: "bg-blue-50/80 dark:bg-blue-950/50",
     textColor: "text-blue-600 dark:text-blue-400",
-    hoverGlow: "hover:shadow-[0_0_30px_rgba(59,130,246,0.3)]"
+    hoverGlow: ""
   },
   walking: {
-    gradient: "from-orange-500 to-amber-500",
+    btnColor: "bg-orange-600 hover:bg-orange-700",
     icon: PersonStanding,
     label: "Walking",
     bgColor: "bg-orange-50/80 dark:bg-orange-950/50",
     textColor: "text-orange-600 dark:text-orange-400",
-    hoverGlow: "hover:shadow-[0_0_30px_rgba(249,115,22,0.3)]"
+    hoverGlow: ""
   },
   cycling: {
-    gradient: "from-purple-500 to-pink-500",
+    btnColor: "bg-green-600 hover:bg-green-700",
     icon: Bike,
     label: "Cycling",
-    bgColor: "bg-purple-50/80 dark:bg-purple-950/50",
-    textColor: "text-purple-600 dark:text-purple-400",
-    hoverGlow: "hover:shadow-[0_0_30px_rgba(168,85,247,0.3)]"
+    bgColor: "bg-green-50/80 dark:bg-green-950/50",
+    textColor: "text-green-600 dark:text-green-400",
+    hoverGlow: ""
   }
 };
 
@@ -137,7 +137,7 @@ export default function RouteInfoCard({
             ) : (
               <motion.button
                 onClick={onStartNavigation}
-                className={`w-full bg-gradient-to-r ${modeStyle.gradient} text-white font-bold py-4 px-6 rounded-2xl flex items-center justify-center gap-3 shadow-lg ${modeStyle.hoverGlow} transition-all`}
+                className={`w-full ${modeStyle.btnColor} text-white font-bold py-4 px-6 rounded-2xl flex items-center justify-center gap-3 shadow-lg ${modeStyle.hoverGlow} transition-all`}
                 whileHover={{ scale: 1.02, y: -2 }}
                 whileTap={{ scale: 0.98 }}
                 transition={{ type: "spring", stiffness: 400, damping: 17 }}
@@ -318,7 +318,7 @@ export default function RouteInfoCard({
                 ) : (
                   <button
                     onClick={onStartNavigation}
-                    className={`w-full bg-gradient-to-r ${modeStyle.gradient} text-white font-bold py-4 rounded-xl flex items-center justify-center gap-2 shadow-lg mb-4`}
+                    className={`w-full ${modeStyle.btnColor} text-white font-bold py-4 rounded-xl flex items-center justify-center gap-2 shadow-lg mb-4`}
                   >
                     <Play className="w-5 h-5" />
                     Start AR Navigation

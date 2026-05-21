@@ -1,11 +1,8 @@
 "use client";
 
-import { useState, useEffect } from "react";
-import { X, Mic, Phone, Loader2 } from "lucide-react";
+import { useState, useRef, useEffect } from "react";
+import { X, AlertTriangle, MapPin, Loader2, Mic, MicOff } from "lucide-react";
 import { toast } from "sonner";
-import { useConversation } from "@elevenlabs/react";
-
-const AGENT_ID = "agent_0801k6ravcndfd6sz48dykgsne27";
 
 interface VoiceReportDialogProps {
   open: boolean;
@@ -20,261 +17,252 @@ interface VoiceReportDialogProps {
   }) => void;
 }
 
+const INCIDENT_TYPES = [
+  { value: "fire", label: "Fire" },
+  { value: "flooding", label: "Flooding" },
+  { value: "gas_leak", label: "Gas Leak" },
+  { value: "power_outage", label: "Power Outage" },
+  { value: "road_closure", label: "Road Closure" },
+  { value: "building_collapse", label: "Building Collapse" },
+  { value: "traffic", label: "Traffic Incident" },
+  { value: "hazard", label: "Hazard" },
+  { value: "earthquake", label: "Earthquake" },
+  { value: "water_system", label: "Water System" },
+];
+
+const SEVERITIES = [
+  { value: "high", label: "High", color: "text-red-600 bg-red-50 border-red-200" },
+  { value: "medium", label: "Medium", color: "text-amber-600 bg-amber-50 border-amber-200" },
+  { value: "low", label: "Low", color: "text-emerald-600 bg-emerald-50 border-emerald-200" },
+];
+
 export default function VoiceReportDialog({
   open,
   onClose,
   onIncidentReported,
 }: VoiceReportDialogProps) {
-  const [status, setStatus] = useState<"idle" | "connecting" | "active" | "processing">("idle");
-  const [transcript, setTranscript] = useState<string[]>([]);
-  const [conversationId, setConversationId] = useState<string | null>(null);
-  const [isAgentSpeaking, setIsAgentSpeaking] = useState(false);
-  
-  // Use official ElevenLabs React SDK
-  const conversation = useConversation({
-    onConnect: (connectionData) => {
-      console.log("✅ Connected to ElevenLabs agent!", connectionData);
-      setStatus("active");
-      setConversationId(connectionData.conversationId);
-      toast.success("Connected! Agent will speak first...");
-    },
-    onDisconnect: () => {
-      console.log("🔌 Disconnected from agent");
-      if (status === "active") {
-        handleEndCall();
-      }
-    },
-    onMessage: (message) => {
-      console.log("📩 Message from agent:", message);
-      
-      // Handle different message types
-      if (message.type === "user_transcript") {
-        const userText = message.message || message.user_transcript || "";
-        if (userText.trim()) {
-          console.log("✅ YOU SAID:", userText);
-          setTranscript(prev => [...prev, `You: ${userText}`]);
-          toast.success("✓ " + userText.substring(0, 40), { duration: 2000 });
-        }
-      } else if (message.type === "agent_response") {
-        const agentText = message.message || message.agent_response || "";
-        if (agentText.trim()) {
-          console.log("✅ AGENT SAID:", agentText);
-          setTranscript(prev => [...prev, `Agent: ${agentText}`]);
-        }
-      }
-    },
-    onError: (error) => {
-      console.error("❌ Conversation error:", error);
-      toast.error(`Error: ${error.message || 'Connection failed'}`);
-      setStatus("idle");
-    },
-  });
+  const [type, setType] = useState("hazard");
+  const [description, setDescription] = useState("");
+  const [severity, setSeverity] = useState("medium");
+  const [locationText, setLocationText] = useState("");
+  const [locationSuggestions, setLocationSuggestions] = useState<{ label: string; lat: number; lng: number }[]>([]);
+  const [locationLocked, setLocationLocked] = useState<{ lat: number; lng: number } | null>(null);
+  const [submitting, setSubmitting] = useState(false);
+  const [listening, setListening] = useState(false);
+  const recognitionRef = useRef<any>(null);
+  const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   useEffect(() => {
-    if (open) {
-      startConversation();
-    } else {
-      stopConversation();
+    if (locationLocked || locationText.length < 3) {
+      setLocationSuggestions([]);
+      return;
     }
-  }, [open]);
-
-  const startConversation = async () => {
-    try {
-      setStatus("connecting");
-      console.log("🎤 Starting conversation with ElevenLabs agent...");
-      
-      // Request microphone access first
+    if (debounceRef.current) clearTimeout(debounceRef.current);
+    debounceRef.current = setTimeout(async () => {
       try {
-        await navigator.mediaDevices.getUserMedia({ audio: true });
-        console.log("✅ Microphone access granted");
-      } catch (error) {
-        console.error("❌ Microphone access denied:", error);
-        toast.error("Microphone access is required. Please allow microphone access and try again.");
-        setStatus("idle");
-        return;
+        const res = await fetch(
+          `https://photon.komoot.io/api/?q=${encodeURIComponent(locationText)}&limit=5`,
+          { headers: { "User-Agent": "CrisGo/1.0" } }
+        );
+        const data = await res.json();
+        const suggestions = (data.features || []).map((f: any) => {
+          const p = f.properties;
+          const parts = [p.name, p.city, p.state, p.country].filter(Boolean);
+          return { label: parts.join(", "), lat: f.geometry.coordinates[1], lng: f.geometry.coordinates[0] };
+        });
+        setLocationSuggestions(suggestions);
+      } catch {
+        setLocationSuggestions([]);
       }
+    }, 350);
+  }, [locationText, locationLocked]);
 
-      // Get signed URL from server
-      const response = await fetch("/api/report-incident/start", {
-        method: "POST",
-      });
-
-      if (!response.ok) {
-        throw new Error("Failed to get authentication");
-      }
-
-      const { signedUrl } = await response.json();
-      console.log("✅ Got signed URL for agent");
-
-      // Start conversation with signed URL
-      await conversation.startSession({
-        signedUrl: signedUrl,
-      });
-
-      console.log("✅ Conversation session started!");
-    } catch (error: any) {
-      console.error("❌ Failed to start conversation:", error);
-      toast.error(error.message || "Failed to start conversation");
-      setStatus("idle");
-    }
-  };
-
-  const stopConversation = async () => {
-    try {
-      if (conversation.status === "connected") {
-        await conversation.endSession();
-        console.log("✅ Conversation ended");
-      }
-      setStatus("idle");
-      setTranscript([]);
-      setIsAgentSpeaking(false);
-      setConversationId(null);
-    } catch (error) {
-      console.error("❌ Error stopping conversation:", error);
-    }
-  };
-
-  const handleEndCall = async () => {
-    if (!conversationId) {
-      console.log("⚠️ No conversation ID");
-      onClose();
+  const toggleVoice = () => {
+    const SR = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
+    if (!SR) {
+      toast.error("Speech recognition not supported in this browser");
       return;
     }
 
-    setStatus("processing");
-    console.log("⏳ Processing conversation...");
-    
-    // Stop the conversation
-    await stopConversation();
-
-    try {
-      // Wait for conversation to be processed by ElevenLabs
-      await new Promise(resolve => setTimeout(resolve, 3000));
-
-      console.log("📤 Sending conversation to processing API...");
-      const response = await fetch("/api/report-incident/process", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ conversationId }),
-      });
-
-      const data = await response.json();
-      console.log("📥 Processing result:", data);
-
-      if (!data.success) {
-        throw new Error(data.error || "Processing failed");
-      }
-
-      if (data.coordinates && data.incidentData) {
-        toast.success("Incident reported successfully!");
-        onIncidentReported({
-          lat: data.coordinates.lat,
-          lng: data.coordinates.lng,
-          type: data.incidentData.incident_type,
-          description: data.incidentData.description,
-          severity: data.incidentData.severity,
-          reports_count: 5, // Dummy count as requested
-        });
-      } else {
-        toast.warning("Location could not be determined from conversation");
-      }
-    } catch (error: any) {
-      console.error("❌ Processing error:", error);
-      toast.error("Failed to process: " + error.message);
-    } finally {
-      onClose();
+    if (listening) {
+      recognitionRef.current?.stop();
+      return;
     }
+
+    const rec = new SR();
+    rec.continuous = true;
+    rec.interimResults = true;
+    rec.lang = "en-US";
+
+    let finalTranscript = description;
+
+    rec.onstart = () => setListening(true);
+    rec.onend = () => setListening(false);
+    rec.onerror = (e: any) => {
+      toast.error("Mic error: " + e.error);
+      setListening(false);
+    };
+    rec.onresult = (e: any) => {
+      let interim = "";
+      for (let i = e.resultIndex; i < e.results.length; i++) {
+        const t = e.results[i][0].transcript;
+        if (e.results[i].isFinal) finalTranscript += (finalTranscript ? " " : "") + t;
+        else interim = t;
+      }
+      setDescription(finalTranscript + (interim ? " " + interim : ""));
+    };
+
+    recognitionRef.current = rec;
+    rec.start();
   };
 
-  if (!open) return null;
+  if (!open) {
+    recognitionRef.current?.stop();
+    return null;
+  }
 
-  // Determine if agent is speaking based on conversation state
-  const isSpeaking = conversation.isSpeaking || isAgentSpeaking;
-  const isConnected = conversation.status === "connected";
+  const handleSubmit = async () => {
+    if (!description.trim()) { toast.error("Description is required"); return; }
+    if (!locationLocked) { toast.error("Select a location from the dropdown"); return; }
+
+    toast.success("Incident reported!");
+    onIncidentReported({ lat: locationLocked.lat, lng: locationLocked.lng, type, description, severity, reports_count: 1 });
+    onClose();
+    setDescription("");
+    setLocationText("");
+    setLocationLocked(null);
+    setType("hazard");
+    setSeverity("medium");
+  };
 
   return (
-    <div className="fixed inset-0 bg-black/50 backdrop-blur-sm z-[9999] flex items-center justify-center p-4">
-      <div className="bg-slate-800 rounded-2xl shadow-2xl max-w-md w-full p-6 border border-slate-700">
-        {/* Header */}
-        <div className="flex items-center justify-between mb-6">
-          <h2 className="text-xl font-bold text-white flex items-center gap-2">
-            <Phone className="w-5 h-5 text-orange-500" />
+    <div className="fixed inset-0 bg-slate-900/40 backdrop-blur-sm z-[9999] flex items-center justify-center p-4">
+      <div className="bg-white rounded-2xl shadow-2xl max-w-md w-full border border-slate-200">
+        <div className="flex items-center justify-between px-5 py-4 border-b border-slate-100">
+          <h2 className="text-base font-semibold text-slate-900 flex items-center gap-2">
+            <AlertTriangle className="w-4 h-4 text-amber-500" />
             Report Incident
           </h2>
-          <button
-            onClick={handleEndCall}
-            className="text-slate-400 hover:text-white transition-colors"
-            disabled={status === "processing"}
-          >
-            <X className="w-5 h-5" />
+          <button onClick={() => { recognitionRef.current?.stop(); onClose(); }} className="text-slate-400 hover:text-slate-600 transition-colors">
+            <X className="w-4 h-4" />
           </button>
         </div>
 
-        {/* Status */}
-        <div className="mb-6 text-center">
-          {status === "connecting" && (
-            <div className="flex flex-col items-center gap-3">
-              <Loader2 className="w-12 h-12 text-orange-500 animate-spin" />
-              <p className="text-slate-300">Connecting to agent...</p>
-            </div>
-          )}
-
-          {status === "active" && (
-            <div className="flex flex-col items-center gap-3">
-              <div className="relative">
-                <Mic 
-                  className={`w-16 h-16 transition-all ${
-                    isSpeaking ? "text-orange-500 scale-110" : "text-red-500"
+        <div className="p-5 space-y-4">
+          <div>
+            <label className="block text-xs font-medium text-slate-500 mb-1.5 uppercase tracking-wider">
+              Type
+            </label>
+            <div className="grid grid-cols-2 gap-1.5">
+              {INCIDENT_TYPES.map((t) => (
+                <button
+                  key={t.value}
+                  onClick={() => setType(t.value)}
+                  className={`px-3 py-1.5 rounded-lg text-xs font-medium border transition-all text-left ${
+                    type === t.value
+                      ? "bg-slate-900 text-white border-slate-900"
+                      : "bg-slate-50 text-slate-500 border-slate-100 hover:border-slate-300"
                   }`}
-                />
-                {!isSpeaking && (
-                  <div className="absolute inset-0 bg-red-500/20 rounded-full animate-ping" />
-                )}
-              </div>
-              <p className="text-slate-300 font-medium">
-                {isSpeaking ? "🔊 Agent is speaking..." : "🎙️ Your turn - speak now"}
-              </p>
-              <p className="text-sm text-slate-400 max-w-xs">
-                Describe what happened and where
-              </p>
+                >
+                  {t.label}
+                </button>
+              ))}
             </div>
-          )}
+          </div>
 
-          {status === "processing" && (
-            <div className="flex flex-col items-center gap-3">
-              <Loader2 className="w-12 h-12 text-blue-500 animate-spin" />
-              <p className="text-slate-300">Processing your report...</p>
+          <div>
+            <label className="block text-xs font-medium text-slate-500 mb-1.5 uppercase tracking-wider">
+              Severity
+            </label>
+            <div className="flex gap-2">
+              {SEVERITIES.map((s) => (
+                <button
+                  key={s.value}
+                  onClick={() => setSeverity(s.value)}
+                  className={`flex-1 py-1.5 rounded-lg text-xs font-medium border transition-all ${
+                    severity === s.value ? s.color : "bg-slate-50 text-slate-400 border-slate-100"
+                  }`}
+                >
+                  {s.label}
+                </button>
+              ))}
             </div>
-          )}
-        </div>
+          </div>
 
-        {/* Real-time Transcript */}
-        {transcript.length > 0 && (
-          <div className="bg-slate-900/50 rounded-lg p-4 max-h-64 overflow-y-auto space-y-2 mb-4">
-            <h3 className="text-xs font-semibold text-slate-400 mb-2">CONVERSATION</h3>
-            {transcript.map((line, i) => (
-              <div
-                key={i}
-                className={`text-sm animate-fade-in ${
-                  line.startsWith("You:") ? "text-green-400 font-medium" : "text-blue-400"
+          <div>
+            <label className="block text-xs font-medium text-slate-500 mb-1.5 uppercase tracking-wider">
+              Location
+            </label>
+            <div className="relative">
+              <MapPin className="absolute left-3 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-slate-400 z-10" />
+              <input
+                type="text"
+                placeholder="e.g. Times Square, New York"
+                value={locationText}
+                onChange={(e) => { setLocationText(e.target.value); setLocationLocked(null); }}
+                className={`w-full pl-8 pr-3 py-2 text-sm border rounded-lg bg-slate-50 text-slate-900 placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-slate-300 focus:bg-white ${locationLocked ? "border-emerald-300" : "border-slate-200"}`}
+              />
+              {locationSuggestions.length > 0 && (
+                <ul className="absolute top-full left-0 right-0 mt-1 bg-white border border-slate-200 rounded-lg shadow-lg z-50 overflow-hidden">
+                  {locationSuggestions.map((s, i) => (
+                    <li
+                      key={i}
+                      onClick={() => { setLocationText(s.label); setLocationLocked({ lat: s.lat, lng: s.lng }); setLocationSuggestions([]); }}
+                      className="px-3 py-2 text-sm text-slate-700 hover:bg-slate-50 cursor-pointer flex items-center gap-2 border-b border-slate-100 last:border-0"
+                    >
+                      <MapPin className="w-3 h-3 text-slate-400 shrink-0" />
+                      {s.label}
+                    </li>
+                  ))}
+                </ul>
+              )}
+            </div>
+          </div>
+
+          <div>
+            <div className="flex items-center justify-between mb-1.5">
+              <label className="block text-xs font-medium text-slate-500 uppercase tracking-wider">
+                Description
+              </label>
+              <button
+                type="button"
+                onClick={toggleVoice}
+                className={`flex items-center gap-1 px-2 py-0.5 rounded-md text-[11px] font-medium border transition-all ${
+                  listening
+                    ? "bg-red-50 text-red-600 border-red-200 animate-pulse"
+                    : "bg-slate-50 text-slate-500 border-slate-200 hover:border-slate-300"
                 }`}
               >
-                {line}
-              </div>
-            ))}
+                {listening ? <MicOff className="w-3 h-3" /> : <Mic className="w-3 h-3" />}
+                {listening ? "Stop" : "Speak"}
+              </button>
+            </div>
+            <textarea
+              rows={3}
+              placeholder={listening ? "Listening..." : "Describe what you observed..."}
+              value={description}
+              onChange={(e) => setDescription(e.target.value)}
+              className={`w-full px-3 py-2 text-sm border rounded-lg bg-slate-50 text-slate-900 placeholder-slate-400 focus:outline-none focus:ring-2 focus:bg-white resize-none transition-all ${
+                listening ? "border-red-300 focus:ring-red-200" : "border-slate-200 focus:ring-slate-300"
+              }`}
+            />
           </div>
-        )}
 
-        {/* Actions */}
-        {status === "active" && (
           <button
-            onClick={handleEndCall}
-            className="mt-4 w-full bg-red-600 hover:bg-red-700 text-white py-3 rounded-lg font-semibold transition-colors flex items-center justify-center gap-2"
+            onClick={handleSubmit}
+            disabled={submitting}
+            className="w-full py-2.5 bg-slate-900 hover:bg-slate-700 disabled:bg-slate-300 text-white rounded-lg text-sm font-semibold transition-colors flex items-center justify-center gap-2"
           >
-            <Phone className="w-4 h-4" />
-            End Call & Submit Report
+            {submitting ? (
+              <>
+                <Loader2 className="w-4 h-4 animate-spin" />
+                Locating...
+              </>
+            ) : (
+              "Submit Report"
+            )}
           </button>
-        )}
+        </div>
       </div>
     </div>
   );

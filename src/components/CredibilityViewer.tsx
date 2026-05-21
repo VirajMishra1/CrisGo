@@ -2,7 +2,18 @@
 
 import { useState, useMemo } from "react";
 import { motion, AnimatePresence } from "framer-motion";
-import { Info, X, Activity, Target, Zap, GitBranch, Database, Search, ChevronDown, ChevronUp, Globe, Brain, TrendingUp, Route, Navigation, Car, Bike, User } from "lucide-react";
+import {
+  X,
+  Activity,
+  Shield,
+  Brain,
+  Globe,
+  Clock,
+  Users,
+  ChevronDown,
+  TrendingUp,
+  BarChart3,
+} from "lucide-react";
 import {
   Chart as ChartJS,
   CategoryScale,
@@ -15,11 +26,10 @@ import {
   Title,
   Tooltip,
   Legend,
-  Filler
-} from 'chart.js';
-import { Line, Radar, Bar, Doughnut, Scatter, Pie } from 'react-chartjs-2';
+  Filler,
+} from "chart.js";
+import { Line, Radar, Bar, Doughnut } from "react-chartjs-2";
 
-// Register ChartJS components
 ChartJS.register(
   CategoryScale,
   LinearScale,
@@ -36,15 +46,15 @@ ChartJS.register(
 
 interface Incident {
   id: string;
-  type: string;
+  type?: string;
   lat: number;
   lng: number;
   title: string;
   credibility: "high" | "medium" | "low";
-  description: string;
-  distance?: number;
+  description?: string;
   severity?: string;
-  timestamp: string;
+  timestamp?: string;
+  reports_count?: number;
   source?: {
     name: string;
     type: string;
@@ -56,6 +66,7 @@ interface Incident {
     prompt_v2?: number;
     source_reliability?: number;
     temporal_relevance?: number;
+    corroboration?: number;
   };
 }
 
@@ -63,59 +74,42 @@ interface CredibilityViewerProps {
   incidents: Incident[];
 }
 
-// LangChain Agent data from backend
-const LANGCHAIN_AGENTS = [
+const PIPELINE_STAGES = [
   {
-    id: "v1",
-    name: "Credibility Auditor",
-    description: "Basic credibility scoring for NYC emergency incidents. Evaluates source authority and assigns 1-5 scores.",
-    role: "Foundation scorer",
-    prompt: "You are a credibility auditor for NYC emergency incidents. Given a list of sources that reported the same incident, assign a credibility score 1-5. 5 = official agencies or multiple major outlets; 1 = unverified single community posts.",
-    strengths: ["Fast evaluation", "Clear scoring rules", "Official source prioritization"],
-    color: "#8b5cf6"
+    icon: Shield,
+    name: "Deterministic Scoring",
+    description: "Source weights: USGS 1.0, NWS 1.0, NYC311 0.85, Google News 0.75, Reddit 0.55",
+    color: "#06b6d4",
   },
   {
-    id: "v2",
-    name: "Media Reliability Analyst",
-    description: "Advanced source trust evaluation with hierarchical prioritization. Uses source distribution for calibration.",
-    role: "Trust calibrator",
-    prompt: "Act as a media reliability analyst. Evaluate source trust and corroboration. Prioritize NYPD/FDNY/NYC OEM highest, then ABC7NY/NBC/CBS/NY1/Gothamist, then tabloids, then citizen apps.",
-    strengths: ["Hierarchical source weighting", "Corroboration analysis", "Distribution-based calibration"],
-    color: "#3b82f6"
+    icon: Brain,
+    name: "Ensemble LLM",
+    description: "5 Gemini prompt versions with weighted median aggregation",
+    color: "#8b5cf6",
   },
   {
-    id: "v3",
-    name: "Authenticity Verifier",
-    description: "Incident verification specialist focusing on multi-source validation and low-credibility detection.",
-    role: "Authenticity guard",
-    prompt: "You are verifying incident authenticity. Score 1-5 based on: (1) presence of official sources, (2) number of independent outlets ≥3, (3) absence of only low-cred sources.",
-    strengths: ["Multi-source validation", "Low-credibility detection", "Independence checking"],
-    color: "#10b981"
+    icon: Globe,
+    name: "Web Grounding",
+    description: "Gemini google_search verification for high-severity events",
+    color: "#3b82f6",
   },
   {
-    id: "v4",
-    name: "Evidence Weighing Specialist",
-    description: "Sophisticated evidence weighting with corroboration thresholds and penalty systems.",
-    role: "Evidence processor",
-    prompt: "Assess credibility using evidence weighting and corroboration thresholds. Source weights: Official (NYPD/FDNY/NYC OEM/MTA)=high; Major local TV/news=medium-high; Tabloids/community apps=low.",
-    strengths: ["Evidence weighting", "Threshold-based scoring", "Penalty systems for low-cred majority"],
-    color: "#f59e0b"
+    icon: Clock,
+    name: "Temporal Decay",
+    description: "1h=1.0, 6h=0.95, 24h=0.85, 72h=0.7 staleness factor",
+    color: "#f59e0b",
   },
   {
-    id: "v5",
-    name: "Rubric-Based Scorer",
-    description: "Precise mathematical rubric with additive/subtractive rules for maximum consistency.",
-    role: "Mathematical precision",
-    prompt: "Use a rubric: start at 2.5. +1.5 if any official source is present; +1.0 if ≥3 independent major outlets; -1.0 if only low-cred sources; +0.02 per corroborating source up to +0.5.",
-    strengths: ["Mathematical precision", "Rule-based consistency", "Transparent scoring logic"],
-    color: "#ef4444"
-  }
+    icon: Users,
+    name: "Cross-Source Corroboration",
+    description: "Multiple independent sources boost confidence score",
+    color: "#10b981",
+  },
 ];
 
 export default function CredibilityViewer({ incidents }: CredibilityViewerProps) {
   const [isOpen, setIsOpen] = useState(false);
   const [expandedSection, setExpandedSection] = useState<string | null>(null);
-  const [selectedAgent, setSelectedAgent] = useState<string | null>(null);
 
   const stats = useMemo(() => {
     if (!incidents || incidents.length === 0) {
@@ -124,167 +118,258 @@ export default function CredibilityViewer({ incidents }: CredibilityViewerProps)
         high: 0,
         medium: 0,
         low: 0,
-        avgScores: { prompt_v1: 0, prompt_v2: 0, prompt_v3: 0, prompt_v4: 0, prompt_v5: 0 }
+        activeSources: 0,
+        avgOverall: 0,
+        avgCorroboration: 0,
+        sourceDistribution: {} as Record<string, number>,
+        sourceReliability: {} as Record<string, { total: number; count: number }>,
+        hourlyBuckets: {} as Record<string, { high: number; medium: number; low: number }>,
       };
     }
 
     const total = incidents.length;
-    const high = incidents.filter(i => i.credibility === "high").length;
-    const medium = incidents.filter(i => i.credibility === "medium").length;
-    const low = incidents.filter(i => i.credibility === "low").length;
-    
-    // Calculate average scores for each of the 5 LangChain agents
-    const avgScores = {
-      prompt_v1: incidents.reduce((acc, i) => acc + (i.credibility_scores?.prompt_v1 || 0), 0) / incidents.length,
-      prompt_v2: incidents.reduce((acc, i) => acc + (i.credibility_scores?.prompt_v2 || 0), 0) / incidents.length,
-      // Generate realistic variations for v3, v4, v5 based on existing scores
-      prompt_v3: incidents.reduce((acc, i) => acc + ((i.credibility_scores?.source_reliability || 0) * 0.95), 0) / incidents.length,
-      prompt_v4: incidents.reduce((acc, i) => acc + ((i.credibility_scores?.temporal_relevance || 0) * 1.05), 0) / incidents.length,
-      prompt_v5: incidents.reduce((acc, i) => acc + ((i.credibility_scores?.overall || 0) * 0.98), 0) / incidents.length,
-    };
+    const high = incidents.filter((i) => i.credibility === "high").length;
+    const medium = incidents.filter((i) => i.credibility === "medium").length;
+    const low = incidents.filter((i) => i.credibility === "low").length;
 
-    return { total, high, medium, low, avgScores };
+    // Source distribution
+    const sourceDistribution: Record<string, number> = {};
+    const sourceReliability: Record<string, { total: number; count: number }> = {};
+    const sourceNames = new Set<string>();
+
+    incidents.forEach((i) => {
+      const name = i.source?.name || "Unknown";
+      sourceDistribution[name] = (sourceDistribution[name] || 0) + 1;
+      sourceNames.add(name);
+      if (i.source?.reliability !== undefined) {
+        if (!sourceReliability[name]) sourceReliability[name] = { total: 0, count: 0 };
+        sourceReliability[name].total += i.source.reliability;
+        sourceReliability[name].count += 1;
+      }
+    });
+
+    // Hourly buckets for severity timeline (last 24h)
+    const hourlyBuckets: Record<string, { high: number; medium: number; low: number }> = {};
+    const now = Date.now();
+    for (let h = 23; h >= 0; h--) {
+      const label = `${h}h ago`;
+      hourlyBuckets[label] = { high: 0, medium: 0, low: 0 };
+    }
+    incidents.forEach((i) => {
+      if (!i.timestamp) return;
+      const age = now - new Date(i.timestamp).getTime();
+      const hoursAgo = Math.floor(age / 3600000);
+      if (hoursAgo >= 0 && hoursAgo < 24) {
+        const label = `${hoursAgo}h ago`;
+        if (hourlyBuckets[label]) {
+          hourlyBuckets[label][i.credibility] += 1;
+        }
+      }
+    });
+
+    const avgOverall =
+      incidents.reduce((acc, i) => acc + (i.credibility_scores?.overall || 0), 0) / total;
+    const corrobIncidents = incidents.filter((i) => i.credibility_scores?.corroboration !== undefined);
+    const avgCorroboration =
+      corrobIncidents.length > 0
+        ? corrobIncidents.reduce((acc, i) => acc + (i.credibility_scores?.corroboration || 0), 0) /
+          corrobIncidents.length
+        : 0;
+
+    return {
+      total,
+      high,
+      medium,
+      low,
+      activeSources: sourceNames.size,
+      avgOverall,
+      avgCorroboration,
+      sourceDistribution,
+      sourceReliability,
+      hourlyBuckets,
+    };
   }, [incidents]);
 
   const toggleSection = (section: string) => {
     setExpandedSection(expandedSection === section ? null : section);
   };
 
-  // 5 LangChain Agents Radar Chart
-  const agentsRadarData = {
-    labels: LANGCHAIN_AGENTS.map(a => a.name),
-    datasets: [{
-      label: '5 LangChain Agent Scores',
-      data: [
-        stats.avgScores.prompt_v1 * 100,
-        stats.avgScores.prompt_v2 * 100,
-        stats.avgScores.prompt_v3 * 100,
-        stats.avgScores.prompt_v4 * 100,
-        stats.avgScores.prompt_v5 * 100,
-      ],
-      backgroundColor: 'rgba(139, 92, 246, 0.2)',
-      borderColor: 'rgba(139, 92, 246, 1)',
-      borderWidth: 3,
-      pointBackgroundColor: LANGCHAIN_AGENTS.map(a => a.color),
-      pointBorderColor: '#fff',
-      pointRadius: 8,
-      pointHoverRadius: 10,
-    }]
-  };
+  // --- Chart data ---
 
+  // Source Distribution Radar
+  const sourceLabels = Object.keys(stats.sourceDistribution);
+  const sourceCounts = sourceLabels.map((k) => stats.sourceDistribution[k]);
+  const radarData = {
+    labels: sourceLabels,
+    datasets: [
+      {
+        label: "Incident Count",
+        data: sourceCounts,
+        backgroundColor: "rgba(100, 116, 139, 0.1)",
+        borderColor: "rgba(100, 116, 139, 0.5)",
+        borderWidth: 2,
+        pointBackgroundColor: "#64748b",
+        pointBorderColor: "rgba(226,232,240,1)",
+        pointRadius: 5,
+        pointHoverRadius: 7,
+      },
+    ],
+  };
   const radarOptions = {
     responsive: true,
     maintainAspectRatio: false,
     scales: {
       r: {
-        min: 0,
-        max: 100,
         beginAtZero: true,
-        ticks: { stepSize: 20, color: 'rgba(148, 163, 184, 0.8)', backdropColor: 'transparent', font: { size: 11 } },
-        grid: { color: 'rgba(148, 163, 184, 0.2)' },
-        pointLabels: { color: 'rgba(203, 213, 225, 1)', font: { size: 12, weight: '600' as const } }
-      }
+        ticks: {
+          color: "rgba(100,116,139,0.8)",
+          backdropColor: "transparent",
+          font: { size: 10 },
+        },
+        grid: { color: "rgba(226,232,240,0.8)" },
+        pointLabels: {
+          color: "rgba(51,65,85,1)",
+          font: { size: 11, weight: "bold" as const },
+        },
+      },
     },
     plugins: {
       legend: { display: false },
-      tooltip: {
-        callbacks: {
-          label: (context: any) => `Score: ${context.parsed.r.toFixed(1)}%`
-        }
-      }
-    }
+      tooltip: { backgroundColor: "rgba(255,255,255,0.95)", titleColor: "#334155", bodyColor: "#475569", borderColor: "#e2e8f0", borderWidth: 1 },
+    },
   };
 
-  // Individual agent performance line chart
-  const agentPerformanceData = {
-    labels: incidents.slice(0, 100).map((_, i) => i + 1),
-    datasets: LANGCHAIN_AGENTS.map((agent, idx) => ({
-      label: agent.name,
-      data: incidents.slice(0, 100).map(i => {
-        const scores = i.credibility_scores || {};
-        if (idx === 0) return (scores.prompt_v1 || 0) * 100;
-        if (idx === 1) return (scores.prompt_v2 || 0) * 100;
-        if (idx === 2) return ((scores.source_reliability || 0) * 0.95) * 100;
-        if (idx === 3) return ((scores.temporal_relevance || 0) * 1.05) * 100;
-        return ((scores.overall || 0) * 0.98) * 100;
-      }),
-      borderColor: agent.color,
-      backgroundColor: agent.color + '20',
-      tension: 0.3,
-      fill: false,
-      pointRadius: 1,
-      pointHoverRadius: 4,
-    }))
+  // Credibility Doughnut
+  const doughnutData = {
+    labels: ["High", "Medium", "Low"],
+    datasets: [
+      {
+        data: [stats.high, stats.medium, stats.low],
+        backgroundColor: ["#e57373", "#ffb74d", "#81c784"],
+        borderColor: ["#e5737340", "#ffb74d40", "#81c78440"],
+        borderWidth: 2,
+        hoverBorderColor: ["#e57373", "#ffb74d", "#81c784"],
+      },
+    ],
+  };
+  const doughnutOptions = {
+    responsive: true,
+    maintainAspectRatio: false,
+    cutout: "70%",
+    plugins: {
+      legend: {
+        display: true,
+        position: "bottom" as const,
+        labels: { color: "rgba(51,65,85,1)", font: { size: 11 }, boxWidth: 12, padding: 16 },
+      },
+      tooltip: { backgroundColor: "rgba(255,255,255,0.95)", titleColor: "#334155", bodyColor: "#475569", borderColor: "#e2e8f0", borderWidth: 1 },
+    },
   };
 
+  // Severity Timeline Line
+  const hourLabels = Object.keys(stats.hourlyBuckets);
+  const timelineData = {
+    labels: hourLabels,
+    datasets: [
+      {
+        label: "High",
+        data: hourLabels.map((h) => stats.hourlyBuckets[h]?.high || 0),
+        borderColor: "#e57373",
+        backgroundColor: "rgba(229,115,115,0.08)",
+        tension: 0.4,
+        fill: true,
+        pointRadius: 2,
+        pointHoverRadius: 5,
+      },
+      {
+        label: "Medium",
+        data: hourLabels.map((h) => stats.hourlyBuckets[h]?.medium || 0),
+        borderColor: "#ffb74d",
+        backgroundColor: "rgba(255,183,77,0.08)",
+        tension: 0.4,
+        fill: true,
+        pointRadius: 2,
+        pointHoverRadius: 5,
+      },
+      {
+        label: "Low",
+        data: hourLabels.map((h) => stats.hourlyBuckets[h]?.low || 0),
+        borderColor: "#81c784",
+        backgroundColor: "rgba(129,199,132,0.08)",
+        tension: 0.4,
+        fill: true,
+        pointRadius: 2,
+        pointHoverRadius: 5,
+      },
+    ],
+  };
   const lineOptions = {
     responsive: true,
     maintainAspectRatio: false,
-    interaction: { mode: 'index' as const, intersect: false },
+    interaction: { mode: "index" as const, intersect: false },
     scales: {
       x: {
-        display: true,
-        grid: { color: 'rgba(148, 163, 184, 0.1)' },
-        ticks: { color: 'rgba(148, 163, 184, 0.8)', maxTicksLimit: 10 }
+        grid: { color: "rgba(226,232,240,0.6)" },
+        ticks: { color: "rgba(100,116,139,0.8)", maxTicksLimit: 12, font: { size: 10 } },
       },
       y: {
-        min: 0,
-        max: 100,
-        grid: { color: 'rgba(148, 163, 184, 0.1)' },
-        ticks: { color: 'rgba(148, 163, 184, 0.8)', stepSize: 25 }
-      }
+        beginAtZero: true,
+        grid: { color: "rgba(226,232,240,0.6)" },
+        ticks: { color: "rgba(100,116,139,0.8)", stepSize: 1, font: { size: 10 } },
+      },
     },
     plugins: {
       legend: {
         display: true,
-        position: 'top' as const,
-        labels: { color: 'rgba(203, 213, 225, 1)', font: { size: 11 }, boxWidth: 12 }
+        position: "top" as const,
+        labels: { color: "rgba(51,65,85,1)", font: { size: 11 }, boxWidth: 12 },
       },
-      tooltip: { backgroundColor: 'rgba(15, 23, 42, 0.95)' }
-    }
+      tooltip: { backgroundColor: "rgba(255,255,255,0.95)", titleColor: "#334155", bodyColor: "#475569", borderColor: "#e2e8f0", borderWidth: 1 },
+    },
   };
 
-  // Opik A/B Test Results
-  const opikComparisonData = {
-    labels: ['Agent V1', 'Agent V2', 'Agent V3', 'Agent V4', 'Agent V5'],
-    datasets: [{
-      label: 'Average Credibility Score (%)',
-      data: [
-        stats.avgScores.prompt_v1 * 100,
-        stats.avgScores.prompt_v2 * 100,
-        stats.avgScores.prompt_v3 * 100,
-        stats.avgScores.prompt_v4 * 100,
-        stats.avgScores.prompt_v5 * 100,
-      ],
-      backgroundColor: LANGCHAIN_AGENTS.map(a => a.color + 'CC'),
-      borderColor: LANGCHAIN_AGENTS.map(a => a.color),
-      borderWidth: 2,
-    }]
+  // Source Reliability Bar (horizontal)
+  const reliabilityEntries = Object.entries(stats.sourceReliability)
+    .map(([name, { total, count }]) => ({ name, avg: total / count }))
+    .sort((a, b) => b.avg - a.avg);
+  const barData = {
+    labels: reliabilityEntries.map((e) => e.name),
+    datasets: [
+      {
+        label: "Avg Reliability",
+        data: reliabilityEntries.map((e) => +(e.avg * 100).toFixed(1)),
+        backgroundColor: reliabilityEntries.map((e) => {
+          const v = e.avg;
+          if (v >= 0.8) return "#81c784";
+          if (v >= 0.6) return "#ffb74d";
+          return "#e57373";
+        }),
+        borderColor: "transparent",
+        borderWidth: 0,
+        borderRadius: 4,
+      },
+    ],
   };
-
   const barOptions = {
     responsive: true,
     maintainAspectRatio: false,
+    indexAxis: "y" as const,
     scales: {
-      x: { grid: { display: false }, ticks: { color: 'rgba(203, 213, 225, 1)', font: { size: 11 } } },
-      y: { grid: { color: 'rgba(148, 163, 184, 0.1)' }, ticks: { color: 'rgba(148, 163, 184, 0.8)' }, min: 0, max: 100 }
+      x: {
+        min: 0,
+        max: 100,
+        grid: { color: "rgba(226,232,240,0.6)" },
+        ticks: { color: "rgba(100,116,139,0.8)", font: { size: 10 } },
+      },
+      y: {
+        grid: { display: false },
+        ticks: { color: "rgba(51,65,85,1)", font: { size: 11 } },
+      },
     },
     plugins: {
       legend: { display: false },
-      tooltip: { backgroundColor: 'rgba(15, 23, 42, 0.95)' }
-    }
-  };
-
-  // Routing Algorithm Data
-  const routeAlgorithmData = {
-    labels: ['Dijkstra Calculation', 'OSRM (Car)', 'Valhalla (Walk)', 'Valhalla (Bike)', 'Incident Avoidance'],
-    datasets: [{
-      label: 'Processing Time (ms)',
-      data: [45, 120, 180, 165, 230],
-      backgroundColor: ['#8b5cf6', '#3b82f6', '#10b981', '#f59e0b', '#ef4444'],
-      borderColor: ['#7c3aed', '#2563eb', '#059669', '#d97706', '#dc2626'],
-      borderWidth: 2,
-    }]
+      tooltip: { backgroundColor: "rgba(255,255,255,0.95)", titleColor: "#334155", bodyColor: "#475569", borderColor: "#e2e8f0", borderWidth: 1 },
+    },
   };
 
   if (!incidents || incidents.length === 0) {
@@ -293,48 +378,43 @@ export default function CredibilityViewer({ incidents }: CredibilityViewerProps)
 
   return (
     <>
-      {/* Floating Info Button - Mobile optimized */}
+      {/* Floating button */}
       <motion.button
         onClick={() => setIsOpen(true)}
-        className="fixed bottom-6 right-6 z-50 w-12 h-12 lg:w-14 lg:h-14 bg-white/90 backdrop-blur-md rounded-full shadow-xl border border-slate-200 flex items-center justify-center group"
-        aria-label="View Analytics"
-        whileHover={{ scale: 1.1, rotate: 12 }}
+        className="fixed bottom-6 right-6 z-50 w-12 h-12 lg:w-14 lg:h-14 bg-white/95 backdrop-blur-xl rounded-full shadow-2xl border border-slate-200 flex items-center justify-center group"
+        aria-label="View Credibility Analytics"
+        whileHover={{ scale: 1.1 }}
         whileTap={{ scale: 0.95 }}
         initial={{ scale: 0, opacity: 0 }}
         animate={{ scale: 1, opacity: 1 }}
         transition={{ type: "spring", stiffness: 400, damping: 17 }}
       >
+        <Activity className="w-5 h-5 lg:w-6 lg:h-6 text-slate-400" />
         <motion.div
-          whileHover={{ rotate: 360 }}
-          transition={{ duration: 0.5 }}
-        >
-          <Info className="w-5 h-5 lg:w-6 lg:h-6 text-slate-900" />
-        </motion.div>
-        <motion.div 
-          className="absolute -top-1 -right-1 w-2.5 h-2.5 lg:w-3 lg:h-3 bg-slate-900 rounded-full"
-          animate={{ scale: [1, 1.2, 1] }}
+          className="absolute -top-1 -right-1 w-2.5 h-2.5 bg-slate-400 rounded-full"
+          animate={{ scale: [1, 1.3, 1], opacity: [1, 0.6, 1] }}
           transition={{ duration: 2, repeat: Infinity }}
         />
       </motion.button>
 
-      {/* Modal - Full screen on mobile, centered on desktop */}
+      {/* Modal */}
       <AnimatePresence>
         {isOpen && (
-          <motion.div 
-            className="fixed inset-0 z-[100] flex items-center justify-center p-0 lg:p-4 bg-slate-900/80 backdrop-blur-xl"
+          <motion.div
+            className="fixed inset-0 z-[100] flex items-center justify-center p-0 lg:p-4 bg-slate-900/50 backdrop-blur-sm"
             initial={{ opacity: 0 }}
             animate={{ opacity: 1 }}
             exit={{ opacity: 0 }}
             transition={{ duration: 0.2 }}
           >
-            <motion.div 
-              className="bg-white/95 backdrop-blur-xl border-0 lg:border border-slate-200 rounded-none lg:rounded-2xl shadow-2xl w-full h-full lg:max-w-7xl lg:w-full lg:max-h-[90vh] overflow-hidden"
-              initial={{ scale: 0.9, opacity: 0, y: 20 }}
+            <motion.div
+              className="bg-white border-0 lg:border border-slate-200 rounded-none lg:rounded-2xl shadow-2xl w-full h-full lg:max-w-7xl lg:w-full lg:max-h-[90vh] overflow-hidden"
+              initial={{ scale: 0.95, opacity: 0, y: 20 }}
               animate={{ scale: 1, opacity: 1, y: 0 }}
-              exit={{ scale: 0.9, opacity: 0, y: 20 }}
+              exit={{ scale: 0.95, opacity: 0, y: 20 }}
               transition={{ type: "spring", stiffness: 400, damping: 25 }}
             >
-              {/* Header - Mobile optimized */}
+              {/* Header */}
               <div className="flex items-center justify-between p-4 lg:p-6 border-b border-slate-200">
                 <motion.div
                   initial={{ x: -20, opacity: 0 }}
@@ -342,530 +422,239 @@ export default function CredibilityViewer({ incidents }: CredibilityViewerProps)
                   transition={{ delay: 0.1 }}
                   className="flex-1 min-w-0"
                 >
-                  <h2 className="text-xl lg:text-3xl font-semibold text-slate-900 flex items-center gap-2 lg:gap-3">
-                    <motion.div 
-                      className="w-8 h-8 lg:w-10 lg:h-10 bg-slate-900 rounded-lg flex items-center justify-center flex-shrink-0"
-                      whileHover={{ rotate: 360 }}
-                      transition={{ duration: 0.5 }}
-                    >
-                      <Activity className="w-4 h-4 lg:w-6 lg:h-6 text-white" />
-                    </motion.div>
-                    <span className="truncate">Analytics</span>
+                  <h2 className="text-xl lg:text-2xl font-semibold text-slate-900 flex items-center gap-2 lg:gap-3">
+                    <div className="w-8 h-8 lg:w-10 lg:h-10 bg-slate-50 border border-slate-200 rounded-lg flex items-center justify-center flex-shrink-0">
+                      <BarChart3 className="w-4 h-4 lg:w-5 lg:h-5 text-slate-500" />
+                    </div>
+                    <span className="truncate">Credibility Pipeline Analytics</span>
                   </h2>
-                  <p className="text-xs lg:text-sm text-slate-600 mt-1 line-clamp-1">
-                    Multi-Agent Intelligence • Real-Time Routing
+                  <p className="text-xs lg:text-sm text-slate-400 mt-1 ml-10 lg:ml-[52px]">
+                    5-stage scoring pipeline &middot; Real-time data
                   </p>
                 </motion.div>
-                <motion.button 
-                  onClick={() => setIsOpen(false)} 
+                <motion.button
+                  onClick={() => setIsOpen(false)}
                   className="p-2 hover:bg-slate-100 rounded-lg transition-colors border border-slate-200 flex-shrink-0"
                   whileHover={{ scale: 1.1, rotate: 90 }}
                   whileTap={{ scale: 0.9 }}
                 >
-                  <X className="w-5 h-5 lg:w-6 lg:h-6 text-slate-600" />
+                  <X className="w-5 h-5 lg:w-6 lg:h-6 text-slate-400" />
                 </motion.button>
               </div>
 
-              {/* Content - Mobile scrollable */}
-              <div className="p-4 lg:p-6 overflow-y-auto max-h-[calc(100vh-80px)] lg:max-h-[calc(90vh-120px)] space-y-3 lg:space-y-4">
-                
-                {/* Main Radar Chart - Mobile optimized */}
-                <motion.div 
-                  className="bg-white/50 backdrop-blur-sm rounded-xl p-4 lg:p-6 border border-slate-200 shadow-sm"
+              {/* Content */}
+              <div className="p-4 lg:p-6 overflow-y-auto max-h-[calc(100vh-80px)] lg:max-h-[calc(90vh-120px)] space-y-4 lg:space-y-5">
+                {/* Pipeline Overview */}
+                <motion.div
+                  className="bg-slate-50 rounded-xl p-4 lg:p-6 border border-slate-100"
                   initial={{ y: 20, opacity: 0 }}
                   animate={{ y: 0, opacity: 1 }}
-                  transition={{ delay: 0.15 }}
-                  whileHover={{ y: -4, boxShadow: "0 20px 25px -5px rgba(0, 0, 0, 0.1)" }}
+                  transition={{ delay: 0.1 }}
                 >
-                  <h3 className="text-lg lg:text-xl font-semibold text-slate-900 mb-3 lg:mb-4 flex items-center gap-2">
-                    <Brain className="w-5 h-5 lg:w-6 lg:h-6 text-slate-600" />
-                    <span className="text-sm lg:text-lg">Multi-Agent Assessment</span>
+                  <h3 className="text-sm lg:text-base font-semibold text-slate-900 mb-4 flex items-center gap-2">
+                    <TrendingUp className="w-4 h-4 text-slate-500" />
+                    Pipeline Overview
                   </h3>
-                  <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 lg:gap-6">
-                    <div className="h-[280px] lg:h-[350px]">
-                      <Radar data={agentsRadarData} options={radarOptions} />
-                    </div>
-                    <div className="space-y-2 lg:space-y-3">
-                      {LANGCHAIN_AGENTS.map((agent, idx) => {
-                        const score = idx === 0 ? stats.avgScores.prompt_v1 :
-                                      idx === 1 ? stats.avgScores.prompt_v2 :
-                                      idx === 2 ? stats.avgScores.prompt_v3 :
-                                      idx === 3 ? stats.avgScores.prompt_v4 :
-                                      stats.avgScores.prompt_v5;
-                        return (
-                          <motion.div 
-                            key={agent.id} 
-                            className="bg-white/80 backdrop-blur-sm rounded-lg p-2.5 lg:p-3 border border-slate-200 hover:border-slate-300 transition-all"
-                            initial={{ x: 20, opacity: 0 }}
-                            animate={{ x: 0, opacity: 1 }}
-                            transition={{ delay: 0.2 + (idx * 0.05) }}
-                            whileHover={{ scale: 1.02, x: 4 }}
-                          >
-                            <div className="flex items-center justify-between mb-1 lg:mb-2">
-                              <div className="flex items-center gap-2 flex-1 min-w-0">
-                                <div className="w-2.5 h-2.5 lg:w-3 lg:h-3 rounded-full flex-shrink-0" style={{ backgroundColor: agent.color }} />
-                                <span className="text-slate-900 font-medium text-xs lg:text-sm truncate">{agent.name}</span>
-                              </div>
-                              <span className="text-lg lg:text-xl font-semibold flex-shrink-0 ml-2" style={{ color: agent.color }}>
-                                {(score * 100).toFixed(1)}%
-                              </span>
+                  <div className="relative flex flex-col lg:flex-row items-stretch lg:items-center gap-3 lg:gap-0">
+                    {/* Gradient connector line (desktop) */}
+                    <div className="hidden lg:block absolute top-1/2 left-[10%] right-[10%] h-px bg-gradient-to-r from-slate-300/40 via-slate-400/40 to-slate-300/40 -translate-y-1/2 z-0" />
+                    {PIPELINE_STAGES.map((stage, idx) => {
+                      const Icon = stage.icon;
+                      return (
+                        <motion.div
+                          key={idx}
+                          className="relative z-10 flex-1 bg-white border border-slate-200 rounded-lg p-3 lg:p-4 lg:mx-1.5 first:lg:ml-0 last:lg:mr-0"
+                          initial={{ y: 15, opacity: 0 }}
+                          animate={{ y: 0, opacity: 1 }}
+                          transition={{ delay: 0.15 + idx * 0.06 }}
+                          whileHover={{ y: -3, borderColor: stage.color + "40" }}
+                        >
+                          <div className="flex items-center gap-2 lg:flex-col lg:items-center lg:text-center">
+                            <div
+                              className="w-9 h-9 rounded-lg flex items-center justify-center flex-shrink-0"
+                              style={{ backgroundColor: stage.color + "15", border: `1px solid ${stage.color}30` }}
+                            >
+                              <Icon className="w-4 h-4" style={{ color: stage.color }} />
                             </div>
-                            <div className="text-[10px] lg:text-xs text-slate-600 truncate">{agent.role}</div>
-                          </motion.div>
-                        );
-                      })}
-                    </div>
+                            <div className="lg:mt-2">
+                              <div className="text-xs font-medium text-slate-900 lg:text-[11px]">{stage.name}</div>
+                              <div className="text-[10px] text-slate-400 mt-0.5 leading-tight hidden lg:block">
+                                {stage.description}
+                              </div>
+                            </div>
+                          </div>
+                        </motion.div>
+                      );
+                    })}
                   </div>
                 </motion.div>
 
-                {/* 1. TAVILY SEARCH */}
-                <motion.div 
-                  className="bg-white/50 backdrop-blur-sm rounded-xl border border-slate-200 shadow-sm overflow-hidden"
+                {/* Stats cards row */}
+                <motion.div
+                  className="grid grid-cols-2 lg:grid-cols-4 gap-3"
                   initial={{ y: 20, opacity: 0 }}
                   animate={{ y: 0, opacity: 1 }}
                   transition={{ delay: 0.2 }}
-                  whileHover={{ y: -2 }}
                 >
-                  <motion.button
-                    onClick={() => toggleSection('tavily')}
-                    className="w-full flex items-center justify-between p-3 lg:p-4 hover:bg-slate-50 transition-colors rounded-xl"
-                    whileHover={{ backgroundColor: "rgba(241, 245, 249, 0.5)" }}
-                    whileTap={{ scale: 0.98 }}
-                  >
-                    <div className="flex items-center gap-2 lg:gap-3 flex-1 min-w-0">
-                      <motion.div 
-                        className="p-1.5 lg:p-2 bg-slate-100 rounded-lg border border-slate-200 flex-shrink-0"
-                        whileHover={{ rotate: 360 }}
-                        transition={{ duration: 0.5 }}
-                      >
-                        <Search className="w-4 h-4 lg:w-5 lg:h-5 text-slate-600" />
-                      </motion.div>
-                      <div className="text-left flex-1 min-w-0">
-                        <h3 className="text-sm lg:text-lg font-semibold text-slate-900 truncate">Real-Time Search</h3>
-                        <p className="text-[10px] lg:text-xs text-slate-600 truncate">Tavily AI-optimized discovery</p>
-                      </div>
-                    </div>
+                  {[
+                    { label: "Total Incidents", value: stats.total, accent: "#64748b" },
+                    { label: "Active Sources", value: stats.activeSources, accent: "#94a3b8" },
+                    {
+                      label: "Avg Credibility",
+                      value: `${(stats.avgOverall * 100).toFixed(1)}%`,
+                      accent: "#ffb74d",
+                    },
+                    {
+                      label: "Avg Corroboration",
+                      value: `${(stats.avgCorroboration * 100).toFixed(1)}%`,
+                      accent: "#81c784",
+                    },
+                  ].map((card, idx) => (
                     <motion.div
-                      animate={{ rotate: expandedSection === 'tavily' ? 180 : 0 }}
-                      transition={{ duration: 0.3 }}
-                      className="flex-shrink-0"
+                      key={idx}
+                      className="bg-slate-50 border border-slate-100 rounded-xl p-3 lg:p-4"
+                      initial={{ scale: 0.9, opacity: 0 }}
+                      animate={{ scale: 1, opacity: 1 }}
+                      transition={{ delay: 0.22 + idx * 0.04 }}
+                      whileHover={{ y: -2, borderColor: card.accent + "30" }}
                     >
-                      <ChevronDown className="w-4 h-4 lg:w-5 lg:h-5 text-slate-600" />
+                      <div className="text-2xl lg:text-3xl font-semibold text-slate-900">{card.value}</div>
+                      <div className="text-[10px] lg:text-xs text-slate-400 mt-0.5">{card.label}</div>
+                      <div className="h-0.5 w-8 rounded-full mt-2" style={{ backgroundColor: card.accent + "60" }} />
                     </motion.div>
-                  </motion.button>
-                  
-                  <AnimatePresence>
-                    {expandedSection === 'tavily' && (
-                      <motion.div 
-                        className="p-3 lg:p-6 pt-0 space-y-3 lg:space-y-4"
-                        initial={{ height: 0, opacity: 0 }}
-                        animate={{ height: "auto", opacity: 1 }}
-                        exit={{ height: 0, opacity: 0 }}
-                        transition={{ duration: 0.3 }}
-                      >
-                        <div className="bg-white/80 rounded-lg p-3 lg:p-4 border border-slate-200">
-                          <h4 className="text-slate-900 font-medium mb-2 lg:mb-3 flex items-center gap-2 text-sm lg:text-base">
-                            <Globe className="w-3.5 h-3.5 lg:w-4 lg:h-4 text-slate-600" />
-                            About Tavily
-                          </h4>
-                          <p className="text-xs lg:text-sm text-slate-700 mb-2 lg:mb-3">
-                            AI-optimized search engine built for LLM agents. Returns structured, parsed content ready for processing.
-                          </p>
-                          <div className="grid grid-cols-1 lg:grid-cols-2 gap-3 lg:gap-4">
-                            <div className="space-y-2">
-                              <h5 className="text-[10px] lg:text-xs font-medium text-slate-600 uppercase">Features</h5>
-                              <ul className="text-[10px] lg:text-xs text-slate-600 space-y-1 list-disc list-inside">
-                                <li>Real-time web data retrieval</li>
-                                <li>Structured JSON responses</li>
-                                <li>Content snippets + raw HTML</li>
-                                <li>Image and URL extraction</li>
-                              </ul>
-                            </div>
-                            <div className="space-y-2">
-                              <h5 className="text-[10px] lg:text-xs font-medium text-slate-600 uppercase">Usage</h5>
-                              <ul className="text-[10px] lg:text-xs text-slate-600 space-y-1 list-disc list-inside">
-                                <li><strong>Data Points:</strong> {stats.total} incidents</li>
-                                <li><strong>Update:</strong> Real-time</li>
-                              </ul>
-                            </div>
-                          </div>
-                        </div>
-
-                        <div className="grid grid-cols-2 lg:grid-cols-3 gap-2 lg:gap-4">
-                          {[
-                            { value: stats.total, label: "Incidents" },
-                            { value: 8, label: "Sources" },
-                            { value: "∞", label: "Real-time" }
-                          ].map((stat, idx) => (
-                            <motion.div 
-                              key={idx}
-                              className="bg-white/80 backdrop-blur-sm rounded-lg p-3 lg:p-4 border border-slate-200"
-                              initial={{ scale: 0.8, opacity: 0 }}
-                              animate={{ scale: 1, opacity: 1 }}
-                              transition={{ delay: idx * 0.1 }}
-                              whileHover={{ scale: 1.05, y: -4 }}
-                            >
-                              <div className="text-2xl lg:text-3xl font-semibold text-slate-900 mb-0.5 lg:mb-1">{stat.value}</div>
-                              <div className="text-[10px] lg:text-xs text-slate-600">{stat.label}</div>
-                            </motion.div>
-                          ))}
-                        </div>
-                      </motion.div>
-                    )}
-                  </AnimatePresence>
+                  ))}
                 </motion.div>
 
-                {/* 2. LANGCHAIN AGENTS */}
-                <motion.div 
-                  className="bg-white/50 backdrop-blur-sm rounded-xl border border-slate-200 shadow-sm overflow-hidden"
-                  initial={{ y: 20, opacity: 0 }}
-                  animate={{ y: 0, opacity: 1 }}
-                  transition={{ delay: 0.25 }}
-                  whileHover={{ y: -2 }}
-                >
-                  <motion.button
-                    onClick={() => toggleSection('langchain')}
-                    className="w-full flex items-center justify-between p-3 lg:p-4 hover:bg-slate-50 transition-colors rounded-xl"
-                    whileHover={{ backgroundColor: "rgba(241, 245, 249, 0.5)" }}
-                    whileTap={{ scale: 0.98 }}
+                {/* Charts grid: Radar + Doughnut */}
+                <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+                  {/* Source Distribution Radar */}
+                  <motion.div
+                    className="bg-white border border-slate-200 rounded-xl shadow-sm p-4 lg:p-5"
+                    initial={{ y: 20, opacity: 0 }}
+                    animate={{ y: 0, opacity: 1 }}
+                    transition={{ delay: 0.25 }}
                   >
-                    <div className="flex items-center gap-2 lg:gap-3">
-                      <motion.div 
-                        className="p-1.5 lg:p-2 bg-slate-100 rounded-lg border border-slate-200"
-                        whileHover={{ rotate: 360 }}
-                        transition={{ duration: 0.5 }}
-                      >
-                        <GitBranch className="w-4 h-4 lg:w-5 lg:h-5 text-slate-600" />
-                      </motion.div>
-                      <div className="text-left">
-                        <h3 className="text-sm lg:text-lg font-semibold text-slate-900">Multi-Agent Pipeline</h3>
-                        <p className="text-[10px] lg:text-xs text-slate-600">5 LangChain agents with LangGraph orchestration</p>
+                    <h3 className="text-sm font-semibold text-slate-900 mb-3 flex items-center gap-2">
+                      <Globe className="w-4 h-4 text-slate-500" />
+                      Source Distribution
+                    </h3>
+                    <div className="h-[280px] lg:h-[300px]">
+                      {sourceLabels.length >= 2 ? (
+                        <Radar data={radarData} options={radarOptions} />
+                      ) : (
+                        <div className="flex items-center justify-center h-full text-slate-400 text-sm">
+                          Need 2+ sources for radar chart
+                        </div>
+                      )}
+                    </div>
+                  </motion.div>
+
+                  {/* Credibility Doughnut */}
+                  <motion.div
+                    className="bg-white border border-slate-200 rounded-xl shadow-sm p-4 lg:p-5"
+                    initial={{ y: 20, opacity: 0 }}
+                    animate={{ y: 0, opacity: 1 }}
+                    transition={{ delay: 0.28 }}
+                  >
+                    <h3 className="text-sm font-semibold text-slate-900 mb-3 flex items-center gap-2">
+                      <Shield className="w-4 h-4 text-slate-500" />
+                      Credibility Distribution
+                    </h3>
+                    <div className="relative h-[280px] lg:h-[300px]">
+                      <Doughnut data={doughnutData} options={doughnutOptions} />
+                      <div className="absolute inset-0 flex items-center justify-center pointer-events-none -mt-6">
+                        <div className="text-center">
+                          <div className="text-3xl font-bold text-slate-900">{stats.total}</div>
+                          <div className="text-[10px] text-slate-400 uppercase tracking-widest">Total</div>
+                        </div>
                       </div>
                     </div>
-                    <motion.div
-                      animate={{ rotate: expandedSection === 'langchain' ? 180 : 0 }}
-                      transition={{ duration: 0.3 }}
-                    >
-                      <ChevronDown className="w-4 h-4 lg:w-5 lg:h-5 text-slate-600" />
-                    </motion.div>
-                  </motion.button>
-                  
-                  <AnimatePresence>
-                    {expandedSection === 'langchain' && (
-                      <motion.div 
-                        className="p-3 lg:p-6 pt-0 space-y-3 lg:space-y-4"
-                        initial={{ height: 0, opacity: 0 }}
-                        animate={{ height: "auto", opacity: 1 }}
-                        exit={{ height: 0, opacity: 0 }}
-                        transition={{ duration: 0.3 }}
-                      >
-                        {/* Agent Performance Line Chart */}
-                        <div className="bg-white/80 rounded-lg p-3 lg:p-4 border border-slate-200">
-                          <h4 className="text-slate-900 font-medium mb-2 lg:mb-3">Agent Performance</h4>
-                          <div className="h-[240px]">
-                            <Line data={agentPerformanceData} options={lineOptions} />
-                          </div>
-                        </div>
+                  </motion.div>
+                </div>
 
-                        {/* Individual Agent Cards */}
-                        <div className="grid md:grid-cols-2 lg:grid-cols-3 gap-3 lg:gap-4">
-                          {LANGCHAIN_AGENTS.map((agent, idx) => {
-                            const score = idx === 0 ? stats.avgScores.prompt_v1 :
-                                          idx === 1 ? stats.avgScores.prompt_v2 :
-                                          idx === 2 ? stats.avgScores.prompt_v3 :
-                                          idx === 3 ? stats.avgScores.prompt_v4 :
-                                          stats.avgScores.prompt_v5;
-                            return (
-                              <motion.div
-                                key={agent.id}
-                                className="bg-white/80 backdrop-blur-sm rounded-lg p-3 lg:p-4 border border-slate-200 cursor-pointer hover:border-slate-300 transition-all"
-                                onClick={() => setSelectedAgent(selectedAgent === agent.id ? null : agent.id)}
-                                initial={{ scale: 0.9, opacity: 0 }}
-                                animate={{ scale: 1, opacity: 1 }}
-                                transition={{ delay: idx * 0.05 }}
-                                whileHover={{ scale: 1.03, y: -4 }}
-                                whileTap={{ scale: 0.98 }}
-                              >
-                                <div className="flex items-start justify-between mb-2 lg:mb-3">
-                                  <div className="flex items-center gap-2">
-                                    <div className="w-8 h-8 rounded-lg flex items-center justify-center border border-slate-200" style={{ backgroundColor: agent.color + '20' }}>
-                                      <Brain className="w-4 h-4" style={{ color: agent.color }} />
-                                    </div>
-                                    <div>
-                                      <h4 className="text-slate-900 font-medium text-xs lg:text-sm">{agent.name}</h4>
-                                      <p className="text-[10px] lg:text-xs text-slate-600">{agent.role}</p>
-                                    </div>
-                                  </div>
-                                  <div className="text-lg lg:text-xl font-semibold" style={{ color: agent.color }}>
-                                    {(score * 100).toFixed(0)}%
-                                  </div>
-                                </div>
-                                
-                                <AnimatePresence>
-                                  {selectedAgent === agent.id && (
-                                    <motion.div 
-                                      className="mt-2 lg:mt-3 pt-2 lg:pt-3 border-t border-slate-200"
-                                      initial={{ height: 0, opacity: 0 }}
-                                      animate={{ height: "auto", opacity: 1 }}
-                                      exit={{ height: 0, opacity: 0 }}
-                                    >
-                                      <p className="text-[10px] lg:text-xs text-slate-600 mb-2">{agent.description}</p>
-                                      <div className="bg-slate-50 rounded p-2 lg:p-3 mb-2 lg:mb-3 border border-slate-200">
-                                        <div className="text-[10px] lg:text-xs text-slate-700">{agent.prompt}</div>
-                                      </div>
-                                      <div>
-                                        <div className="text-[10px] lg:text-xs font-medium text-slate-700 mb-1">Strengths:</div>
-                                        <ul className="text-[10px] lg:text-xs text-slate-600 space-y-1">
-                                          {agent.strengths.map((s, i) => (
-                                            <li key={i} className="flex items-center gap-2">
-                                              <div className="w-1 h-1 rounded-full" style={{ backgroundColor: agent.color }} />
-                                              {s}
-                                            </li>
-                                          ))}
-                                        </ul>
-                                      </div>
-                                    </motion.div>
-                                  )}
-                                </AnimatePresence>
-                              </motion.div>
-                            );
-                          })}
-                        </div>
-                      </motion.div>
-                    )}
-                  </AnimatePresence>
-                </motion.div>
-
-                {/* 3. OPIK TRACKING */}
-                <motion.div 
-                  className="bg-white/50 backdrop-blur-sm rounded-xl border border-slate-200 shadow-sm overflow-hidden"
+                {/* Severity Timeline (collapsible) */}
+                <motion.div
+                  className="bg-white border border-slate-200 rounded-xl shadow-sm overflow-hidden"
                   initial={{ y: 20, opacity: 0 }}
                   animate={{ y: 0, opacity: 1 }}
                   transition={{ delay: 0.3 }}
-                  whileHover={{ y: -2 }}
                 >
                   <motion.button
-                    onClick={() => toggleSection('opik')}
-                    className="w-full flex items-center justify-between p-3 lg:p-4 hover:bg-slate-50 transition-colors rounded-xl"
-                    whileHover={{ backgroundColor: "rgba(241, 245, 249, 0.5)" }}
-                    whileTap={{ scale: 0.98 }}
+                    onClick={() => toggleSection("timeline")}
+                    className="w-full flex items-center justify-between p-4 hover:bg-slate-50 transition-colors"
+                    whileTap={{ scale: 0.99 }}
                   >
-                    <div className="flex items-center gap-2 lg:gap-3">
-                      <motion.div 
-                        className="p-1.5 lg:p-2 bg-slate-100 rounded-lg border border-slate-200"
-                        whileHover={{ rotate: 360 }}
-                        transition={{ duration: 0.5 }}
-                      >
-                        <Database className="w-4 h-4 lg:w-5 lg:h-5 text-slate-600" />
-                      </motion.div>
-                      <div className="text-left">
-                        <h3 className="text-sm lg:text-lg font-semibold text-slate-900">Experiment Tracking</h3>
-                        <p className="text-[10px] lg:text-xs text-slate-600">Opik A/B testing and performance monitoring</p>
-                      </div>
+                    <div className="flex items-center gap-2">
+                      <Clock className="w-4 h-4 text-slate-500" />
+                      <span className="text-sm font-semibold text-slate-900">Severity Timeline (24h)</span>
                     </div>
                     <motion.div
-                      animate={{ rotate: expandedSection === 'opik' ? 180 : 0 }}
+                      animate={{ rotate: expandedSection === "timeline" ? 180 : 0 }}
                       transition={{ duration: 0.3 }}
                     >
-                      <ChevronDown className="w-4 h-4 lg:w-5 lg:h-5 text-slate-600" />
+                      <ChevronDown className="w-4 h-4 text-slate-400" />
                     </motion.div>
                   </motion.button>
-                  
                   <AnimatePresence>
-                    {expandedSection === 'opik' && (
-                      <motion.div 
-                        className="p-3 lg:p-6 pt-0 space-y-3 lg:space-y-4"
+                    {expandedSection === "timeline" && (
+                      <motion.div
+                        className="px-4 pb-4"
                         initial={{ height: 0, opacity: 0 }}
                         animate={{ height: "auto", opacity: 1 }}
                         exit={{ height: 0, opacity: 0 }}
                         transition={{ duration: 0.3 }}
                       >
-                        <div className="bg-white/80 rounded-lg p-3 lg:p-4 border border-slate-200">
-                          <h4 className="text-slate-900 font-medium mb-2 lg:mb-3 flex items-center gap-2 text-sm lg:text-base">
-                            <TrendingUp className="w-3.5 h-3.5 lg:w-4 lg:h-4 text-slate-600" />
-                            About Opik
-                          </h4>
-                          <p className="text-xs lg:text-sm text-slate-700 mb-2 lg:mb-3">
-                            Open-source LLM evaluation and experiment tracking platform. Monitors our 5 LangChain agents and optimizes scoring accuracy.
-                          </p>
-                        </div>
-
-                        {/* A/B Test Comparison */}
-                        <div className="grid md:grid-cols-2 lg:grid-cols-2 gap-3 lg:gap-4">
-                          <div className="bg-white/80 backdrop-blur-sm rounded-lg p-3 lg:p-4 border border-slate-200">
-                            <h4 className="text-slate-900 font-medium mb-2 lg:mb-3">Agent Performance</h4>
-                            <div className="h-[240px]">
-                              <Bar data={opikComparisonData} options={barOptions} />
-                            </div>
-                          </div>
-
-                          <div className="space-y-2 lg:space-y-3">
-                            <h4 className="text-slate-900 font-medium mb-2 lg:mb-3">Tracked Metrics</h4>
-                            <div className="grid grid-cols-2 gap-3 lg:gap-4">
-                              {[
-                                { value: stats.total, label: "Total Evaluations" },
-                                { value: 5, label: "Prompt Versions" },
-                                { value: ((stats.avgScores.prompt_v1 + stats.avgScores.prompt_v2 + stats.avgScores.prompt_v3 + stats.avgScores.prompt_v4 + stats.avgScores.prompt_v5) / 5 * 100).toFixed(1) + "%", label: "Avg Accuracy" },
-                                { value: "92ms", label: "Avg Latency" }
-                              ].map((metric, idx) => (
-                                <motion.div 
-                                  key={idx}
-                                  className="bg-white/80 backdrop-blur-sm rounded-lg p-2.5 lg:p-3 border border-slate-200"
-                                  initial={{ scale: 0.8, opacity: 0 }}
-                                  animate={{ scale: 1, opacity: 1 }}
-                                  transition={{ delay: idx * 0.05 }}
-                                  whileHover={{ scale: 1.05 }}
-                                >
-                                  <div className="text-lg lg:text-xl font-semibold text-slate-900">{metric.value}</div>
-                                  <div className="text-[10px] lg:text-xs text-slate-600">{metric.label}</div>
-                                </motion.div>
-                              ))}
-                            </div>
-
-                            <div className="bg-white/80 backdrop-blur-sm rounded-lg p-3 lg:p-4 border border-slate-200 mt-2 lg:mt-3">
-                              <h5 className="text-[10px] lg:text-xs font-medium text-slate-700 uppercase mb-1.5 lg:mb-2">Features</h5>
-                              <ul className="text-[10px] lg:text-xs text-slate-600 space-y-1 list-disc list-inside">
-                                <li>Trace logging per agent invocation</li>
-                                <li>A/B testing between 5 prompts</li>
-                                <li>Latency and cost tracking</li>
-                                <li>Accuracy metrics and matrices</li>
-                                <li>Real-time dashboards</li>
-                              </ul>
-                            </div>
-                          </div>
+                        <div className="h-[240px] lg:h-[280px]">
+                          <Line data={timelineData} options={lineOptions} />
                         </div>
                       </motion.div>
                     )}
                   </AnimatePresence>
                 </motion.div>
 
-                {/* 4. SAFE ROUTE ALGORITHM */}
-                <motion.div 
-                  className="bg-white/50 backdrop-blur-sm rounded-xl border border-slate-200 shadow-sm overflow-hidden"
+                {/* Source Reliability (collapsible) */}
+                <motion.div
+                  className="bg-white border border-slate-200 rounded-xl shadow-sm overflow-hidden"
                   initial={{ y: 20, opacity: 0 }}
                   animate={{ y: 0, opacity: 1 }}
-                  transition={{ delay: 0.35 }}
-                  whileHover={{ y: -2 }}
+                  transition={{ delay: 0.33 }}
                 >
                   <motion.button
-                    onClick={() => toggleSection('routing')}
-                    className="w-full flex items-center justify-between p-3 lg:p-4 hover:bg-slate-50 transition-colors rounded-xl"
-                    whileHover={{ backgroundColor: "rgba(241, 245, 249, 0.5)" }}
-                    whileTap={{ scale: 0.98 }}
+                    onClick={() => toggleSection("reliability")}
+                    className="w-full flex items-center justify-between p-4 hover:bg-slate-50 transition-colors"
+                    whileTap={{ scale: 0.99 }}
                   >
-                    <div className="flex items-center gap-2 lg:gap-3">
-                      <motion.div 
-                        className="p-1.5 lg:p-2 bg-slate-100 rounded-lg border border-slate-200"
-                        whileHover={{ rotate: 360 }}
-                        transition={{ duration: 0.5 }}
-                      >
-                        <Route className="w-4 h-4 lg:w-5 lg:h-5 text-slate-600" />
-                      </motion.div>
-                      <div className="text-left">
-                        <h3 className="text-sm lg:text-lg font-semibold text-slate-900">Intelligent Routing</h3>
-                        <p className="text-[10px] lg:text-xs text-slate-600">Dijkstra + OSRM + Valhalla algorithms</p>
-                      </div>
+                    <div className="flex items-center gap-2">
+                      <TrendingUp className="w-4 h-4 text-slate-500" />
+                      <span className="text-sm font-semibold text-slate-900">Source Reliability Scores</span>
                     </div>
                     <motion.div
-                      animate={{ rotate: expandedSection === 'routing' ? 180 : 0 }}
+                      animate={{ rotate: expandedSection === "reliability" ? 180 : 0 }}
                       transition={{ duration: 0.3 }}
                     >
-                      <ChevronDown className="w-4 h-4 lg:w-5 lg:h-5 text-slate-600" />
+                      <ChevronDown className="w-4 h-4 text-slate-400" />
                     </motion.div>
                   </motion.button>
-                  
                   <AnimatePresence>
-                    {expandedSection === 'routing' && (
-                      <motion.div 
-                        className="p-3 lg:p-6 pt-0 space-y-3 lg:space-y-4"
+                    {expandedSection === "reliability" && (
+                      <motion.div
+                        className="px-4 pb-4"
                         initial={{ height: 0, opacity: 0 }}
                         animate={{ height: "auto", opacity: 1 }}
                         exit={{ height: 0, opacity: 0 }}
                         transition={{ duration: 0.3 }}
                       >
-                        <div className="bg-white/80 rounded-lg p-3 lg:p-4 border border-slate-200">
-                          <h4 className="text-slate-900 font-medium mb-2 lg:mb-3 flex items-center gap-2 text-sm lg:text-base">
-                            <Navigation className="w-3.5 h-3.5 lg:w-4 lg:h-4 text-slate-600" />
-                            How It Works
-                          </h4>
-                          <div className="space-y-2 lg:space-y-3 text-[10px] lg:text-sm text-slate-700">
-                            {[
-                              { title: "Dijkstra's Algorithm", desc: "Core pathfinding that calculates shortest paths. Modified to penalize routes near high-risk incidents." },
-                              { title: "Risk Zones", desc: "High-credibility incidents (> 80%) become avoidance zones with 10x weight multiplier." },
-                              { title: "OSRM (Cars)", desc: "Real-time car routing with traffic awareness and turn-by-turn navigation." },
-                              { title: "Valhalla (Walking/Biking)", desc: "Optimized for pedestrians and cyclists with elevation and bike lane data." }
-                            ].map((step, idx) => (
-                              <motion.div 
-                                key={idx}
-                                className="flex items-start gap-2 lg:gap-3"
-                                initial={{ x: -20, opacity: 0 }}
-                                animate={{ x: 0, opacity: 1 }}
-                                transition={{ delay: idx * 0.1 }}
-                              >
-                                <div className="w-6 h-6 rounded-full bg-slate-900 text-white flex items-center justify-center text-xs font-semibold flex-shrink-0">{idx + 1}</div>
-                                <div>
-                                  <strong className="text-slate-900">{step.title}:</strong> {step.desc}
-                                </div>
-                              </motion.div>
-                            ))}
-                          </div>
-                        </div>
-
-                        <div className="grid md:grid-cols-2 lg:grid-cols-2 gap-3 lg:gap-4">
-                          <div className="bg-white/80 backdrop-blur-sm rounded-lg p-3 lg:p-4 border border-slate-200">
-                            <h4 className="text-slate-900 font-medium mb-2 lg:mb-3">Engine Performance</h4>
-                            <div className="h-[200px]">
-                              <Bar data={routeAlgorithmData} options={barOptions} />
+                        <div
+                          className="lg:h-[280px]"
+                          style={{ height: Math.max(180, reliabilityEntries.length * 36) }}
+                        >
+                          {reliabilityEntries.length > 0 ? (
+                            <Bar data={barData} options={barOptions} />
+                          ) : (
+                            <div className="flex items-center justify-center h-full text-slate-400 text-sm">
+                              No reliability data available
                             </div>
-                          </div>
-
-                          <div className="space-y-2 lg:space-y-3">
-                            <h4 className="text-slate-900 font-medium mb-2 lg:mb-3">Transport Modes</h4>
-                            <div className="space-y-2">
-                              {[
-                                { icon: Car, name: "Driving (OSRM)", desc: "Traffic-aware, turn restrictions", time: "120ms" },
-                                { icon: User, name: "Walking (Valhalla)", desc: "Sidewalks, crosswalks", time: "180ms" },
-                                { icon: Bike, name: "Biking (Valhalla)", desc: "Bike lanes, elevation", time: "165ms" }
-                              ].map((mode, idx) => {
-                                const Icon = mode.icon;
-                                return (
-                                  <motion.div 
-                                    key={idx}
-                                    className="bg-white/80 backdrop-blur-sm rounded-lg p-2.5 lg:p-3 border border-slate-200 flex items-center gap-2 lg:gap-3"
-                                    initial={{ x: 20, opacity: 0 }}
-                                    animate={{ x: 0, opacity: 1 }}
-                                    transition={{ delay: idx * 0.1 }}
-                                    whileHover={{ scale: 1.02, x: 4 }}
-                                  >
-                                    <Icon className="w-6 h-6 text-slate-600" />
-                                    <div className="flex-1">
-                                      <div className="text-slate-900 font-medium text-xs lg:text-sm">{mode.name}</div>
-                                      <div className="text-[10px] lg:text-xs text-slate-600">{mode.desc}</div>
-                                    </div>
-                                    <div className="text-lg lg:text-xl font-semibold text-slate-900">{mode.time}</div>
-                                  </motion.div>
-                                );
-                              })}
-                            </div>
-
-                            <div className="bg-white/80 rounded-lg p-2.5 lg:p-3 border border-slate-200 mt-2 lg:mt-3">
-                              <div className="text-[10px] lg:text-xs font-medium text-slate-900 mb-1.5 lg:mb-2">Safety Distribution</div>
-                              <div className="grid grid-cols-3 gap-2 text-center">
-                                <div>
-                                  <div className="text-lg lg:text-xl font-semibold text-red-500">{stats.high}</div>
-                                  <div className="text-[10px] lg:text-xs text-slate-600">High Risk</div>
-                                </div>
-                                <div>
-                                  <div className="text-lg lg:text-xl font-semibold text-yellow-500">{stats.medium}</div>
-                                  <div className="text-[10px] lg:text-xs text-slate-600">Medium</div>
-                                </div>
-                                <div>
-                                  <div className="text-lg lg:text-xl font-semibold text-green-500">{stats.low}</div>
-                                  <div className="text-[10px] lg:text-xs text-slate-600">Low Risk</div>
-                                </div>
-                              </div>
-                            </div>
-                          </div>
+                          )}
                         </div>
                       </motion.div>
                     )}

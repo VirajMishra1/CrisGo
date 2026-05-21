@@ -70,7 +70,7 @@ export default function TopNav({
       } else {
         setStartSuggestions([]);
       }
-    }, 300);
+    }, 1200);
 
     return () => clearTimeout(timer);
   }, [startLocation, showStartDropdown]);
@@ -91,7 +91,7 @@ export default function TopNav({
       } else {
         setEndSuggestions([]);
       }
-    }, 300);
+    }, 1200);
 
     return () => clearTimeout(timer);
   }, [endLocation, showEndDropdown]);
@@ -206,14 +206,14 @@ export default function TopNav({
               whileHover={{ scale: 1.02 }}
               transition={{ type: "spring", stiffness: 400, damping: 17 }}
             >
-              <motion.div 
+              <motion.div
                 className="w-10 h-10 rounded-xl flex items-center justify-center overflow-hidden"
                 whileHover={{ rotate: 360 }}
                 transition={{ type: "spring", stiffness: 200, damping: 15, duration: 0.6 }}
               >
-                <img 
-                  src="https://slelguoygbfzlpylpxfs.supabase.co/storage/v1/object/public/project-uploads/59d2dceb-cfc5-4828-8f6f-09b0e104c104/generated_images/app-icon-logo-design-for-crisgo-navigati-b2af2c7c-20251005134208.jpg" 
-                  alt="CrisGo Logo" 
+                <img
+                  src="https://slelguoygbfzlpylpxfs.supabase.co/storage/v1/object/public/project-uploads/59d2dceb-cfc5-4828-8f6f-09b0e104c104/generated_images/app-icon-logo-design-for-crisgo-navigati-b2af2c7c-20251005134208.jpg"
+                  alt="CrisGo Logo"
                   className="w-full h-full object-cover"
                 />
               </motion.div>
@@ -413,13 +413,13 @@ export default function TopNav({
               <motion.button
                 onClick={handleSearch}
                 disabled={isCalculating || !startLocation || !endLocation}
-                className="relative px-6 py-2 bg-slate-900 text-white rounded-lg font-medium text-sm disabled:opacity-50 disabled:cursor-not-allowed overflow-hidden shadow-sm"
+                className="relative px-6 py-2 bg-slate-100 text-slate-600 rounded-xl font-medium text-sm disabled:opacity-50 disabled:cursor-not-allowed overflow-hidden hover:bg-slate-200 transition-colors"
                 whileHover={{ scale: 1.05 }}
                 whileTap={{ scale: 0.98 }}
                 transition={{ type: "spring", stiffness: 400, damping: 17 }}
               >
                 <motion.div
-                  className="absolute inset-0 bg-gradient-to-r from-slate-800 to-slate-900"
+                  className="absolute inset-0 bg-gradient-to-r from-slate-200 to-slate-100"
                   initial={{ x: "-100%" }}
                   whileHover={{ x: "100%" }}
                   transition={{ duration: 0.5 }}
@@ -434,7 +434,7 @@ export default function TopNav({
             {/* Report Button */}
             <motion.button
               onClick={onReportIncident}
-              className="px-4 py-2 bg-slate-900 text-white rounded-lg font-medium text-sm flex items-center gap-2 shadow-sm hover:bg-slate-800 transition-colors"
+              className="px-4 py-2 bg-slate-100 text-slate-600 rounded-xl font-medium text-sm flex items-center gap-2 hover:bg-slate-200 transition-colors"
               whileHover={{ scale: 1.05 }}
               whileTap={{ scale: 0.98 }}
               transition={{ type: "spring", stiffness: 400, damping: 17 }}
@@ -458,9 +458,9 @@ export default function TopNav({
             {/* Logo */}
             <div className="flex items-center gap-2">
               <div className="w-8 h-8 rounded-lg flex items-center justify-center overflow-hidden">
-                <img 
-                  src="https://slelguoygbfzlpylpxfs.supabase.co/storage/v1/object/public/project-uploads/59d2dceb-cfc5-4828-8f6f-09b0e104c104/generated_images/app-icon-logo-design-for-crisgo-navigati-b2af2c7c-20251005134208.jpg" 
-                  alt="CrisGo Logo" 
+                <img
+                  src="https://slelguoygbfzlpylpxfs.supabase.co/storage/v1/object/public/project-uploads/59d2dceb-cfc5-4828-8f6f-09b0e104c104/generated_images/app-icon-logo-design-for-crisgo-navigati-b2af2c7c-20251005134208.jpg"
+                  alt="CrisGo Logo"
                   className="w-full h-full object-cover"
                 />
               </div>

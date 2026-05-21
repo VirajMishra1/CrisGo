@@ -39,4 +39,12 @@ next-env.d.ts
 
 node_modules/
 .env
+.env.local
+.env*.local
 .DS_Store
+
+# backend
+backend/data.db
+backend/__pycache__/
+backend/**/__pycache__/
+backend/**/*.pyc

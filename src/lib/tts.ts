@@ -1,73 +1,56 @@
 /**
- * Text-to-Speech utility using ElevenLabs API
+ * Text-to-Speech utility using free Web Speech API (SpeechSynthesis)
+ * No API key required — works in all modern browsers
  */
 
-const ELEVENLABS_API_KEY = "2500e0517c20e06ef1bf94e32c7973eda6112a9e8100a924b5569b350b3de305";
-const VOICE_ID = "pNInz6obpgDQGcFmaJgB"; // Default voice - can be changed
+let currentUtterance: SpeechSynthesisUtterance | null = null;
 
-/**
- * Speaks text using ElevenLabs TTS API
- * @param text - The text to speak
- * @returns Promise that resolves when audio finishes playing
- */
 export async function speakText(text: string): Promise<void> {
-  try {
-    console.log("🔊 TTS: Speaking:", text);
+  if (typeof window === "undefined" || !window.speechSynthesis) {
+    console.warn("SpeechSynthesis not available");
+    return;
+  }
 
-    const response = await fetch(
-      `https://api.elevenlabs.io/v1/text-to-speech/${VOICE_ID}`,
-      {
-        method: "POST",
-        headers: {
-          "Accept": "audio/mpeg",
-          "Content-Type": "application/json",
-          "xi-api-key": ELEVENLABS_API_KEY,
-        },
-        body: JSON.stringify({
-          text: text,
-          model_id: "eleven_monolingual_v1",
-          voice_settings: {
-            stability: 0.5,
-            similarity_boost: 0.5
-          }
-        }),
-      }
-    );
+  // Cancel any ongoing speech
+  window.speechSynthesis.cancel();
 
-    if (!response.ok) {
-      const errorText = await response.text();
-      throw new Error(`TTS API error: ${response.status} - ${errorText}`);
-    }
+  return new Promise((resolve, reject) => {
+    const utterance = new SpeechSynthesisUtterance(text);
+    currentUtterance = utterance;
 
-    // Get audio data as blob
-    const audioBlob = await response.blob();
-    console.log("✅ TTS: Audio received, size:", audioBlob.size, "bytes");
+    // Pick a good English voice if available
+    const voices = window.speechSynthesis.getVoices();
+    const preferred = voices.find(
+      (v) => v.lang.startsWith("en") && v.name.includes("Google")
+    ) || voices.find((v) => v.lang.startsWith("en-US"))
+      || voices.find((v) => v.lang.startsWith("en"));
 
-    // Create audio element and play
-    const audioUrl = URL.createObjectURL(audioBlob);
-    const audio = new Audio(audioUrl);
+    if (preferred) utterance.voice = preferred;
+    utterance.rate = 1.0;
+    utterance.pitch = 1.0;
+    utterance.volume = 1.0;
 
-    return new Promise((resolve, reject) => {
-      audio.onended = () => {
-        console.log("✅ TTS: Playback complete");
-        URL.revokeObjectURL(audioUrl);
+    utterance.onend = () => {
+      currentUtterance = null;
+      resolve();
+    };
+
+    utterance.onerror = (event) => {
+      currentUtterance = null;
+      if (event.error === "canceled" || event.error === "interrupted") {
         resolve();
-      };
+      } else {
+        reject(new Error(`TTS error: ${event.error}`));
+      }
+    };
 
-      audio.onerror = (error) => {
-        console.error("❌ TTS: Playback error:", error);
-        URL.revokeObjectURL(audioUrl);
-        reject(error);
-      };
+    window.speechSynthesis.speak(utterance);
+  });
+}
 
-      audio.play().catch((error) => {
-        console.error("❌ TTS: Play failed:", error);
-        URL.revokeObjectURL(audioUrl);
-        reject(error);
-      });
-    });
-  } catch (error) {
-    console.error("❌ TTS: Error:", error);
-    throw error;
+export function stopSpeaking(): void {
+  if (typeof window !== "undefined" && window.speechSynthesis) {
+    window.speechSynthesis.cancel();
+    currentUtterance = null;
   }
 }

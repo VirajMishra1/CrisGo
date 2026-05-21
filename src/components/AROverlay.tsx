@@ -18,7 +18,10 @@ interface Incident {
   lng: number;
   credibility: "high" | "medium" | "low";
   title: string;
-  description: string;
+  description?: string;
+  type?: string;
+  severity?: string;
+  timestamp?: string;
 }
 
 interface AROverlayProps {
@@ -351,7 +354,7 @@ export default function AROverlay({
       // iOS devices with webkitCompassHeading (most reliable for iOS)
       if ('webkitCompassHeading' in event && typeof (event as any).webkitCompassHeading === 'number') {
         heading = (event as any).webkitCompassHeading;
-        console.log('📱 iOS Compass Update:', Math.round(heading), '°');
+        console.log('📱 iOS Compass Update:', Math.round(heading ?? 0), '°');
       }
       // Android and other devices use alpha
       else if (event.alpha !== null) {
